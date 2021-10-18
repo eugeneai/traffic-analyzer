@@ -183,6 +183,9 @@
    :- public(tcp_flag/1).
    tcp_flag(Flag):-
      tcp_flag(Flag,'1').
+   :- public(tcp_fin/0).
+   tcp_fin :-
+     tcp_flag(fin).
    :- public(tcp_ack/1).
    tcp_ack(N):-
      tcp_flag(ack),
@@ -197,47 +200,61 @@
 :- end_object.
 
 :- object(connection(_Sniffing_)).
+   :- public(inc/2).
+   inc(A,B):- add(A,1,B).
+   :- public(add/3).
+   add(A,B,C):-
+     C is (A + B) mod 4294967296.
    :- public(conn_none/2).
+   % TODO: sa(SYNA-ACKA,SYND-ACKD)
    conn_none(AD,
-     c(none-none,AD,sa(none,none),last(none))).
+     c(none-none,AD,none,none)).
+
+   :- protected(current_pack/1).
+   current_pack(packet(Layers)) :-
+     _Sniffing_::current_pack(json(Layers)).
+
    :- public(shift/2).
-   shift(
-       c(none-none,AD,sa(_,_),last(_)),
-       c(start-none,AD,sa(S,none),last([N]))
+   shift(   % ---->
+       c(none-none,AD,_,_),
+       c(start-none,AD,sa(SA-none,none),last([N]))
        ) :-
-     _Sniffing_::current_pack(json(Package)),
-     P = packet(Package),
-     P::tcp_addr(src-dst,AD),
-     P::tcp_seq(S),
-     \+ P::tcp_flag(fin),!,
-     P::number(N).
-   shift(
-       c(start-none,A-D,sa(S,none),last([P|Tail])),
-       c(start-start,A-D,sa(Seq,S),last([N,P|Tail]))
+     current_pack(Pkg),
+     Pkg::tcp_addr(src-dst,AD),
+     Pkg::tcp_seq(SA),    % Generated
+     \+ Pkg::tcp_fin,
+     Pkg::number(N).
+   shift(   % <----
+       c(start-none,A-D,sa(SA-none,none),last([P|Tail])),
+       c(start-start,A-D,sa(SA-none,SeqD-AD),last([N,P|Tail]))
    ) :-
      % debugger::trace,
-     _Sniffing_::current_pack(json(Package)),
-     Pkg = packet(Package),
+     current_pack(Pkg),
      Pkg::number(N),
      N>P,
      Pkg::tcp_addr(src-dst,D-A),  % opposite direction
-     Ack is S+1,
-     Pkg::tcp_ack(Ack),!,
-     Pkg::tcp_seq(Seq),
-     \+ Pkg::tcp_flag(fin).
-   shift(
-       c(start-start,A-D,sa(Seq1,Ack1),last([P|Tail])),
-       c(est-est,A-D,sa(Ack2,Seq1),last([N,P|Tail]))
+     inc(SA,AD),
+     Pkg::tcp_ack(AD),
+     Pkg::tcp_seq(SeqD),  % Generated
+     \+ Pkg::tcp_fin.
+   shift(   % ---->
+       c(start-start,A-D,sa(SA-none,SD-AD),last([P|Tail])),
+       c(est-est,A-D,sa(SA1-AA,SD-AD),last([N,P|Tail]))
    ) :-
      % debugger::trace,
-     _Sniffing_::current_pack(json(Package)),
-     Pkg = packet(Package),
+     current_pack(Pkg),
      Pkg::number(N),
      N>P,
      Pkg::tcp_addr(src-dst,A-D),  % opposite direction
      % debugger::trace,
-     Ack2 is Seq1+1,
-     Pkg::tcp_ack(Ack2),!,
+     inc(SD,AA),
+     inc(SA,SA1),
+     Pkg::tcp_ack(AA),
      \+ Pkg::tcp_flag(fin).
+ %   shift(   % ----> push
+ %       c(est-est,A-D,sa(SA1-AA,SD-AD),last([N,P|Tail])),
+ % a
+ %   ) :- true.
+
 
 :- end_object.
