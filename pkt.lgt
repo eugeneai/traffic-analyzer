@@ -126,33 +126,17 @@
    field(Option, Attrs):-
      Attrs\=json(_),
      Option =.. [Name,Value],
-     % debugger::trace,
      split_ref(Name, Head, Tail),
-     % format('~k Attr:~k~n~n',[Head, Attrs]),
      Op1 =.. [Head, JSON],
      option(Op1, Attrs),
-     format('GOT: ~k = ~k~n~n',[Head, JSON]),
-     % debugger::trace,
-     % Op2 =.. [Tail, Value],
      field(Option, JSON).
    field(Option, Attrs):-
      Attrs\=json(_),
-     % debugger::trace,
      member(_=json(A),Attrs),
      field(Option, A).
 
-   % field(Name=Value, Attrs):-
-   %   split_ref(Name, Head, Tail),!,
-   %   format('~k Attr:~k~n~n',[Head, Attrs]),
-   %   debugger::trace,
-   %   option(eth=JSON, Attrs),
-   %   format('GOT: ~k = ~k~n~n',[Head, JSON]),
-   %   debugger::trace,
-   %   field(Tail=Value, JSON).
-
    :- public(split_ref/3).
    split_ref(Atom,Ref,Refs):-
-     % format('Split: ~k,~k,~k~n',[Atom,Ref,Refs]),
      atom(Atom),
      sub_atom(Atom,B,1,TL,'.'),
      S is B+1,
@@ -163,5 +147,97 @@
    field(Option):-
      field(Option, _Layers_).
 
+   :- public(tcp_addr/2).
+   tcp_addr(src, A:P):-
+     field('ip.src'(A)),
+     field('tcp.srcport'(B)),
+     atom_number(B,P).
+   tcp_addr(dst, A:P):-
+     field('ip.dst'(A)),
+     field('tcp.dstport'(B)),
+     atom_number(B,P).
+   tcp_addr(src-dst,S-D):-
+     tcp_addr(src,S),
+     tcp_addr(dst,D).
+   :- public(time/2).
+   time(abs,A):-
+     field('frame.time_epoch'(A)).
+   :- public(eth_addr/2).
+   eth_addr(src,A):-
+     field('eth.src_tree'(json(Tree))),
+     field('eth.addr'(A),Tree).
+   eth_addr(dst,A):-
+     field('eth.dst_tree'(json(Tree))),
+     field('eth.addr'(A),Tree).
+   :- public(number/1).
+   number(N):-
+     field('frame.number'(A)),
+     atom_number(A,N).
+   :- public(tcp_flag/2).
+   tcp_flag(Flag,A):-
+     member(Flag,[ns,cwr,ecn,urg,ack,push,reset,syn]),
+     field('tcp.flags_tree'(T)),
+     atom_concat('tcp.flags.',Flag,F),
+     Q =.. [F,A],
+     field(Q,T).
+   :- public(tcp_flag/1).
+   tcp_flag(Flag):-
+     tcp_flag(Flag,'1').
+   :- public(tcp_ack/1).
+   tcp_ack(N):-
+     tcp_flag(ack),
+     field('tcp.ack_raw'(A)),
+     atom_number(A,N).
+   :- public(tcp_seq/1).
+   tcp_seq(N):-
+     tcp_flag(syn),
+     field('tcp.seq_raw'(A)),
+     atom_number(A,N).
+
+:- end_object.
+
+:- object(connection(_Sniffing_)).
+   :- public(conn_none/2).
+   conn_none(AD,
+     c(none-none,AD,sa(none,none),last(none))).
+   :- public(shift/2).
+   shift(
+       c(none-none,AD,sa(_,_),last(_)),
+       c(start-none,AD,sa(S,none),last([N]))
+       ) :-
+     _Sniffing_::current_pack(json(Package)),
+     P = packet(Package),
+     P::tcp_addr(src-dst,AD),
+     P::tcp_seq(S),
+     \+ P::tcp_flag(fin),!,
+     P::number(N).
+   shift(
+       c(start-none,A-D,sa(S,none),last([P|Tail])),
+       c(start-start,A-D,sa(Seq,S),last([N,P|Tail]))
+   ) :-
+     % debugger::trace,
+     _Sniffing_::current_pack(json(Package)),
+     Pkg = packet(Package),
+     Pkg::number(N),
+     N>P,
+     Pkg::tcp_addr(src-dst,D-A),  % opposite direction
+     Ack is S+1,
+     Pkg::tcp_ack(Ack),!,
+     Pkg::tcp_seq(Seq),
+     \+ Pkg::tcp_flag(fin).
+   shift(
+       c(start-start,A-D,sa(Seq1,Ack1),last([P|Tail])),
+       c(est-est,A-D,sa(Ack2,Seq1),last([N,P|Tail]))
+   ) :-
+     % debugger::trace,
+     _Sniffing_::current_pack(json(Package)),
+     Pkg = packet(Package),
+     Pkg::number(N),
+     N>P,
+     Pkg::tcp_addr(src-dst,A-D),  % opposite direction
+     % debugger::trace,
+     Ack2 is Seq1+1,
+     Pkg::tcp_ack(Ack2),!,
+     \+ Pkg::tcp_flag(fin).
 
 :- end_object.
