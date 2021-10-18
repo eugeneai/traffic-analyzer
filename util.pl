@@ -12,7 +12,9 @@
 :- persistent package(layers:acyclic).
 
 attach_package_db(File):-
-    db_attach(File, [sync(none)]).
+    format('~nLoading database ~w~n',[File]),
+    db_attach(File, [sync(none)]),
+    format('Done~n~n').
 
 detach_package_db:-
     db_sync(close),

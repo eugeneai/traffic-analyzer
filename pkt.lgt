@@ -186,6 +186,9 @@
    :- public(tcp_fin/0).
    tcp_fin :-
      tcp_flag(fin).
+   :- public(tcp_push/0).
+   tcp_push :-
+     tcp_flag(push).
    :- public(tcp_ack/1).
    tcp_ack(N):-
      tcp_flag(ack),
@@ -196,6 +199,14 @@
      tcp_flag(syn),
      field('tcp.seq_raw'(A)),
      atom_number(A,N).
+   :- public(tcp_len/1).
+   tcp_len(N):-
+     field('tcp.len'(A)),
+     atom_number(A,N).
+   :- public(tcp_payload/1).
+   tcp_payload(Data):-
+     field('tcp.payload'(Data)),
+     format(' DATA:~w ',[Data]).
 
 :- end_object.
 
@@ -207,8 +218,8 @@
      C is (A + B) mod 4294967296.
    :- public(conn_none/2).
    % TODO: sa(SYNA-ACKA,SYND-ACKD)
-   conn_none(AD,
-     c(none-none,AD,none,none)).
+   conn_none(A-D,
+     c(none-none,A-D,none,none)).
 
    :- protected(current_pack/1).
    current_pack(packet(Layers)) :-
@@ -251,10 +262,41 @@
      inc(SA,SA1),
      Pkg::tcp_ack(AA),
      \+ Pkg::tcp_flag(fin).
- %   shift(   % ----> push
- %       c(est-est,A-D,sa(SA1-AA,SD-AD),last([N,P|Tail])),
- % a
- %   ) :- true.
+   shift(   % ----> push
+       c(est-est,A-D,sa(SA-AA,SD-AD),last([P|Tail])),
+       c(est-est,A-D,sa(SA1-AA,AA-SA1),last([N,P|Tail]))
+    ) :-
+     current_pack(Pkg),
+     Pkg::number(N),
+     N>P,
+     Pkg::tcp_push,
+     Pkg::tcp_ack(AA),
+     Pkg::tcp_len(LA),
+     add(SA,LA,SA1),
+     \+ Pkg::tcp_fin,
+     Pkg::tcp_payload(Data).
+   shift(   % <---- push
+       c(est-est,D-A,sa(SD-AD,SA-AA),last([P|Tail])),
+       c(est-est,D-A,sa(AA-SA1,SA1-AA),last([N,P|Tail]))
+    ) :-
+     current_pack(Pkg),
+     Pkg::number(N),
+     N>P,
+     Pkg::tcp_push,
+     Pkg::tcp_ack(AA),
+     Pkg::tcp_len(LA),
+     add(SA,LA,SA1),
+     \+ Pkg::tcp_fin,
+     Pkg::tcp_payload(Data).
+   % shift(   % <---- push
+   %     c(est-est,A-D,sa(SA-AA,SD-AD),last(L1)),
+   %     c(est-est,A-D,sa(SA1-AA,AA-SA1),last(L2))
+   %  ) :-
+   %   shift(
+   %     c(est-est,D-A,sa(SD-AD,SA-AA),last(L1)),
+   %     c(est-est,D-A,sa(AA-SA1,SA1-AA),last(L2))
+   %   ).
+
 
 
 :- end_object.

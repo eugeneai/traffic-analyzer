@@ -17,6 +17,7 @@
     pcap('ih-tmp/very-total.pcap','tcp.len>0 or icmp')::load.
 
   get_one:-
+    % pcap_config::current_option(db_name,DBFile),
     pcap_config::current_option(test_db_name,DBFile),
     Snif=db(DBFile),
     Snif::connect_db,
@@ -36,13 +37,21 @@
     P::tcp_addr(src-dst, SD),
     format('tcp_src->dst:~w~n',[SD]),
     C = connection(Snif),
-    C::conn_none(('192.168.1.10':1024)-('192.168.1.11':10000), ConnNone),
+    C::conn_none((_:1024)-_, ConnNone),
+%    C::conn_none(('192.168.1.10':1025)-('192.168.1.12':10000), ConnNone),
+%    C::conn_none(('192.168.1.10':1024)-('192.168.1.11':10000), ConnNone),
     C::shift(ConnNone, ConnStartNone),!,
     format('conn_n_n:~w~n',[ConnStartNone]),
     C::shift(ConnStartNone,ConnStartStart),!,
     format('conn_s_s:~w~n',[ConnStartStart]),
     C::shift(ConnStartStart,ConnEstEst),!,
     format('conn_e_e:~w~n',[ConnEstEst]),
+    C::shift(ConnEstEst,ConnEstEst1),!,
+    format('conn_e_e1:~w~n',[ConnEstEst1]),
+    C::shift(ConnEstEst1,ConnEstEst2),!,
+    format('conn_e_e2:~w~n',[ConnEstEst2]),
+    C::shift(ConnEstEst2,ConnEstEst3),!,
+    format('conn_e_e3:~w~n',[ConnEstEst3]),
     true.
 
 
