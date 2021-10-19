@@ -58,7 +58,9 @@
   disconnect_db:-
     detach_package_db.
   current_pack(Pkg):-
-    current_package(Pkg).
+%    current_package(Pkg).
+    current_package(Pkg),
+    retract_package(Pkg).
 
 :- end_object.
 
@@ -159,6 +161,14 @@
    tcp_addr(src-dst,S-D):-
      tcp_addr(src,S),
      tcp_addr(dst,D).
+   :- public(ip_addr/2).
+   ip_addr(src,S) :-
+     field('ip.src'(S)).
+   ip_addr(dst,D) :-
+     field('ip.dst'(D)).
+   ip_addr(src-dst,S-D) :-
+     ip_addr(src,S),
+     ip_addr(dst,D).
    :- public(time/2).
    time(abs,A):-
      field('frame.time_epoch'(A)).
@@ -249,6 +259,7 @@
      inc(SA,SA1),
      _Pkg_::tcp_ack(AA),
      \+ _Pkg_::tcp_fin,!.
+   % Pushing
    shift(   % ----> push
        c(est-est,A-D,sa(SA-AA,SD-AD)),
        c(est-est,A-D,sa(SA1-AA,AA-SA1)),
@@ -285,6 +296,15 @@
      inc(AA,AA1),
      _Pkg_::tcp_ack(AA1),    % Check
      \+ _Pkg_::tcp_fin,!.
+   shift(   % <---- Ack,Fin
+       c(fw1-cw,A-D,sa(SD-AD,SA-AA)),
+       c(closed-last,A-D,sa(SD-AD,SA-AA)),
+       fin_ack(A-D)
+       ) :-
+     _Pkg_::tcp_addr(src-dst,D-A),
+     inc(AA,AA1),
+     _Pkg_::tcp_ack(AA1),    % Check
+     _Pkg_::tcp_fin,!.
    shift(   % <---- Ack,FIN
        c(fw2-cw,A-D,sa(SD-AD,SA-AA)),
        c(closed-last,A-D,sa(SD-AD,SA-AA)),
@@ -306,15 +326,41 @@
      inc(AD,AD1),
      _Pkg_::tcp_ack(AD1),    % Check
      \+ _Pkg_::tcp_fin,!.
+
+   % reset
+   shift(   % <---- Rst
+       c(start-none,   S-D,sa(SS-SA,_)),
+       c(closed-closed,S-D,sa(SS-SA,none-DA)),
+       reset(S-D)
+   ) :-
+     _Pkg_::tcp_addr(src-dst,D-S),  % opposite direction
+     % debugger::trace,
+     inc(SS,DA),
+     _Pkg_::tcp_ack(DA),
+     _Pkg_::tcp_flag(reset),
+     \+ _Pkg_::tcp_fin,!.
+   % icmp
+   shift(   % ---->
+       c(none-none,S-D,_),
+       c(none-none,S-D,none),
+       icmp(S-D)
+       ) :-
+     _Pkg_::field('ip.proto'('1')),
+     % debugger::trace,
+     _Pkg_::ip_addr(src-dst,AD),
+     \+ _Pkg_::tcp_fin,!.
 :- end_object.
 
 
 :- object(connections(_Pkg_)).
    :- public(shift/3).
    shift([],[s(NewState,[N])], Event):-
-     state(_Pkg_)::conn_none(A-B,S),!,
      _Pkg_::number(N),
+     % (N>=25000,!,
+     % debugger::trace;true),
+     state(_Pkg_)::conn_none(A-B,S),!,
      shift(S,NewState,Event),!.
+
    % forward direction
    shift(State, NextState, Event):-
      state(_Pkg_)::shift(State, NextState, Event),
@@ -330,16 +376,20 @@
        c(StD1-StS1,D-S,sa(SD1-AD1,SS1-AS1)),
        Event
    ),!.
-   shift([s(State,_)|T],T, closed(AD)) :-
-     shift(State, _, closed(AD)),!.
+   shift([s(State,_)|T],T, Event) :-
+     shift(State, _, Event),
+     final_state(Event),!.
    shift([s(State,[P|ST])|T],[s(NextState,[N,P|ST])|T], Event) :-
      shift(State, NextState, Event),
-     format('~niiiiiii~n'),
      _Pkg_::number(N),
      N>P, % Just for a case check
      !.
    shift([X|T],[X|R],Event) :-
      shift(T, R, Event),!.
+   :- protected(final_state/1).
+   final_state(closed(_)).
+   final_state(reset(_)).
+   final_state(icmp(_)).
 :- end_object.
 
 :- object(analyzer(_Sniffing_)).
@@ -359,7 +409,14 @@
    :- protected(proceed/1).
    proceed(LastState):-
      forall(
-       current_pack(Pkg),
+       (
+         current_pack(Pkg),
+         Pkg::number(PkgN),
+         % PkgN>=29055,
+         PkgN<25000,
+         format('~nPKG ~w~n',[PkgN]),
+         true
+       ),
        (
          state(State),
          format('Current State ~w ~n',[State]),
