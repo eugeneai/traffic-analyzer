@@ -218,43 +218,40 @@
    :- public(conn_none/2).
    % TODO: sa(SYNA-ACKA,SYND-ACKD)
    conn_none(A-D,
-     c(none-none,A-D,none,none)).
+     c(none-none,A-D,none)).
 
    :- public(shift/3).
    shift(   % ---->
-       c(none-none,AD,_,_),
-       c(start-none,AD,sa(SA-none,none),last([N])),
+       c(none-none,AD,_),
+       c(start-none,AD,sa(SA-none,none)),
        initiate(AD)
        ) :-
      _Pkg_::tcp_addr(src-dst,AD),
      _Pkg_::tcp_seq(SA),    % Generated
-     \+ _Pkg_::tcp_fin,!,
-     _Pkg_::number(N).
+     \+ _Pkg_::tcp_fin,!.
    shift(   % <----
-       c(start-none, A-D,sa(SA-_,_),last([P|Tail])),
-       c(start-start,A-D,sa(SA-_,SeqD-AD),last([N,P|Tail])),
+       c(start-none, A-D,sa(SA-_,_)),
+       c(start-start,A-D,sa(SA-_,SeqD-AD)),
        syn_back(A-D)
    ) :-
      _Pkg_::tcp_addr(src-dst,D-A),  % opposite direction
      inc(SA,AD),
      _Pkg_::tcp_ack(AD),
      _Pkg_::tcp_seq(SeqD),  % Generated
-     \+ _Pkg_::tcp_fin,!,
-     _Pkg_::number(N).
+     \+ _Pkg_::tcp_fin,!.
    shift(   % ---->
-       c(start-start,A-D,sa(SA-_,SD-AD),last([P|Tail])),
-       c(est-est,A-D,sa(SA1-AA,SD-AD),last([N,P|Tail])),
+       c(start-start,A-D,sa(SA-_,SD-AD)),
+       c(est-est,A-D,sa(SA1-AA,SD-AD)),
        established(A-D)
    ) :-
      _Pkg_::tcp_addr(src-dst,A-D),  % opposite direction
      inc(SD,AA),
      inc(SA,SA1),
      _Pkg_::tcp_ack(AA),
-     \+ _Pkg_::tcp_fin,!,
-     _Pkg_::number(N).
+     \+ _Pkg_::tcp_fin,!.
    shift(   % ----> push
-       c(est-est,A-D,sa(SA-AA,SD-AD),last([P|Tail])),
-       c(est-est,A-D,sa(SA1-AA,AA-SA1),last([N,P|Tail])),
+       c(est-est,A-D,sa(SA-AA,SD-AD)),
+       c(est-est,A-D,sa(SA1-AA,AA-SA1)),
        push(A-D,Data)
     ) :-
      _Pkg_::tcp_push,
@@ -262,85 +259,85 @@
      _Pkg_::tcp_len(LA),
      add(SA,LA,SA1),
      \+ _Pkg_::tcp_fin,!,
-     _Pkg_::tcp_payload(Data),
-     _Pkg_::number(N).
+     _Pkg_::tcp_payload(Data).
    shift(   % ----> ACK
-       c(est-est,A-D,sa(SD-AD,SA-AA),last([P|Tail])),
-       c(est-est,A-D,sa(SD-AD,SA-AA),last([N,P|Tail])),
+       c(est-est,A-D,sa(SD-AD,SA-AA)),
+       c(est-est,A-D,sa(SD-AD,SA-AA)),
        ack(A-D)
        ) :-
      _Pkg_::tcp_addr(src-dst,A-D),
      _Pkg_::tcp_ack(AD),    % Check
-     \+ _Pkg_::tcp_fin,!,
-     _Pkg_::number(N).
+     \+ _Pkg_::tcp_fin.
    shift(   % ----> ACK,Fin
-       c(est-est,A-D,sa(SD-AD,SA-AA),last([P|Tail])),
-       c(fw1-cw,A-D,sa(SD-AD,SA-AA),last([N,P|Tail])),
+       c(est-est,A-D,sa(SD-AD,SA-AA)),
+       c(fw1-cw,A-D,sa(SD-AD,SA-AA)),
        fin_start(A-D)
        ) :-
      _Pkg_::tcp_addr(src-dst,A-D),
      _Pkg_::tcp_ack(AD),    % Check
-     _Pkg_::tcp_fin,!,
-     _Pkg_::number(N).
+     _Pkg_::tcp_fin,!.
    shift(   % <---- Ack
-       c(fw1-cw,A-D,sa(SD-AD,SA-AA),last([P|Tail])),
-       c(fw2-cw,A-D,sa(SD-AD,SA-AA),last([N,P|Tail])),
+       c(fw1-cw,A-D,sa(SD-AD,SA-AA)),
+       c(fw2-cw,A-D,sa(SD-AD,SA-AA)),
        fin_ack(A-D)
        ) :-
      _Pkg_::tcp_addr(src-dst,D-A),
      inc(AA,AA1),
      _Pkg_::tcp_ack(AA1),    % Check
-     \+ _Pkg_::tcp_fin,!,
-     _Pkg_::number(N).
+     \+ _Pkg_::tcp_fin,!.
    shift(   % <---- Ack,FIN
-       c(fw2-cw,A-D,sa(SD-AD,SA-AA),last([P|Tail])),
-       c(closed-last,A-D,sa(SD-AD,SA-AA),last([N,P|Tail])),
+       c(fw2-cw,A-D,sa(SD-AD,SA-AA)),
+       c(closed-last,A-D,sa(SD-AD,SA-AA)),
        fin_fin(A-D)
        ) :-
      _Pkg_::tcp_addr(src-dst,D-A),
      inc(AA,AA1),
      _Pkg_::tcp_ack(AA1),    % Check
-     _Pkg_::tcp_fin,!,
+     _Pkg_::tcp_fin,!.
      % _Pkg_::tcp_flag(push), % TODO: Analyze payload,
      % format('PKG: ~n~w~n',[_Pkg_]),
      % _Pkg_::tcp_payload(Data),
-     _Pkg_::number(N).
    shift(   % ----> ACK
-       c(closed-last,A-D,sa(SD-AD,SA-AA),last([P|Tail])),
-       c(closed-closed,A-D,sa(SD-AD,SA-AA),last([N,P|Tail])),
+       c(closed-last,A-D,sa(SD-AD,SA-AA)),
+       c(closed-closed,A-D,sa(SD-AD,SA-AA)),
        closed(A-D)
        ) :-
      _Pkg_::tcp_addr(src-dst,A-D),
      inc(AD,AD1),
      _Pkg_::tcp_ack(AD1),    % Check
-     \+ _Pkg_::tcp_fin,!,
-     _Pkg_::number(N).
+     \+ _Pkg_::tcp_fin,!.
 :- end_object.
 
 
 :- object(connections(_Pkg_)).
    :- public(shift/3).
-   shift([],[NewState], Event):-
+   shift([],[s(NewState,[N])], Event):-
      state(_Pkg_)::conn_none(A-B,S),!,
+     _Pkg_::number(N),
      shift(S,NewState,Event),!.
    % forward direction
    shift(State, NextState, Event):-
-     state(_Pkg_)::shift(State, NextState, Event),!.
+     state(_Pkg_)::shift(State, NextState, Event),
+     !.
    % in reverse direction
    shift(
-     c(StS-StD  ,S-D,sa(SS-AS,  SD-AD  ),List),
-     c(StS1-StD1,S-D,sa(SS1-AS1,SD1-AD1),List1),
+     c(StS-StD  ,S-D,sa(SS-AS,  SD-AD  )),
+     c(StS1-StD1,S-D,sa(SS1-AS1,SD1-AD1)),
      backward(Event)
    ):-
      state(_Pkg_)::shift(
-       c(StD-StS  ,D-S,sa(SD-AD  ,SS-AS  ),List),
-       c(StD1-StS1,D-S,sa(SD1-AD1,SS1-AS1),List1),
+       c(StD-StS  ,D-S,sa(SD-AD  ,SS-AS  )),
+       c(StD1-StS1,D-S,sa(SD1-AD1,SS1-AS1)),
        Event
    ),!.
-   shift([State|T],T, closed(AD)) :-
+   shift([s(State,_)|T],T, closed(AD)) :-
      shift(State, _, closed(AD)),!.
-   shift([State|T],[NextState|T], Event) :-
-     shift(State, NextState, Event),!.
+   shift([s(State,[P|ST])|T],[s(NextState,[N,P|ST])|T], Event) :-
+     shift(State, NextState, Event),
+     format('~niiiiiii~n'),
+     _Pkg_::number(N),
+     N>P, % Just for a case check
+     !.
    shift([X|T],[X|R],Event) :-
      shift(T, R, Event),!.
 :- end_object.
