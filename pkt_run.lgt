@@ -7,7 +7,7 @@
 
   :- public(run/0).
   run:-
-    get_one.
+    analyze.
     % test_split.
 
   load_all_tcp_icmp:-
@@ -16,11 +16,14 @@
   load_non_zero_length:-
     pcap('ih-tmp/very-total.pcap','tcp.len>0 or icmp')::load.
 
-  get_one:-
-    % pcap_config::current_option(db_name,DBFile),
+  connect_sniffer(Snif) :-
     pcap_config::current_option(test_db_name,DBFile),
     Snif=db(DBFile),
-    Snif::connect_db,
+    Snif::connect_db.
+
+  get_one:-
+    % pcap_config::current_option(db_name,DBFile),
+    connect_sniffer(Snif),
 %    O::current_pack(Pkg),
 %    O::layers(Pkg,Layers),!,
     Snif::current_pack(json(Layers)),!,
@@ -36,7 +39,8 @@
     format('~n ! fin~n'),
     P::tcp_addr(src-dst, SD),
     format('tcp_src->dst:~w~n',[SD]),
-    C = connection(Snif),
+    % TODO: Principle changed ..... the following code is not valid
+    C = sate(Snif),
     C::conn_none((_:1024)-_, ConnNone),
 %    C::conn_none(('192.168.1.10':1025)-('192.168.1.12':10000), ConnNone),
 %    C::conn_none(('192.168.1.10':1024)-('192.168.1.11':10000), ConnNone),
@@ -54,6 +58,10 @@
     format('conn_e_e3:~w~n',[ConnEstEst3]),
     true.
 
+  analyze:-
+    connect_sniffer(Snif),
+    analyzer(Snif)::run(LastState),
+    format('LastState:~w~n',[LastState]).
 
   test_split:-
     Atom='ip.src.addr',
