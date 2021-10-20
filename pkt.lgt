@@ -249,102 +249,112 @@
      _Pkg_::tcp_ack(A1),
      _Pkg_::tcp_fin.
 
-   :- public(shift/3).
-   shift(   % ---->
+   :- public(shift/4).
+   shift(   % ----> Syn
+       tcp,
        c(e(none ,S,  _:SA, SB), e(none,D, DS:DA,DB)),
        c(e(start,S, SS:SA, SB), e(none,D, DS:DA,DB)),
        initiate(S-D)
        ) :-
-     _Pkg_::tcp_addr(src-dst,S-D),
      _Pkg_::tcp_seq(SS),    % Generated
      \+ _Pkg_::tcp_fin,!.
-   shift(   % <----
-       c(e(start,S, SS:SA, SB), e(none, D,  _:_ ,DB)),
+   shift(   % ----> Ack
+       tcp,
+       c(e(none, S,  _:_,  SB), e(start,D, DS:_ ,DB)),
        c(e(start,S, SS:SA, SB), e(start,D, DS:DA,DB)),
-       backward(syn(S-D))
+       syn(S-D)
    ) :-
-     _Pkg_::tcp_addr(src-dst,D-S),  % opposite direction
-     _Pkg_::tcp_seq(DS),  % Generated
-     conn_ack(SS,DA),!.
-   shift(   % ---->
+     _Pkg_::tcp_seq(SS),  % Generated
+     conn_ack(DS,SA),!.
+   shift(   % ----> Ack
+       tcp,
        c(e(start,S, SS :_,  SB), e(start,D, DS:DA, DB)),
-       c(e(est  ,S, SS1:SA, SB), e(est  ,D, DS:DA, DB)),
+       c(e(est  ,S, SS1:SA, SB), e(est  ,D, SA:DA, DB)),
+       %                                     ^
        established(S-D)
    ) :-
-     _Pkg_::tcp_addr(src-dst,S-D),
      inc(SS,SS1),
      conn_ack(DS,SA),!.
    % Pushing
    shift(   % ----> push
+       tcp,
        c(e(est,S,  SS:SA, SB), e(est,D, DS:DA, DB)),
-       c(e(est,S, SS1:SA, []), e(est,D, DS:DA, DB)),
+       c(e(est,S, SS1:SA, []), e(est,D, DS:SS1, DB)),
        push(S-D,[Data|SB])
     ) :-
-     _Pkg_::tcp_addr(src-dst,S-D),
      _Pkg_::tcp_push,
      _Pkg_::tcp_len(LA),
+     % format('~nPKG:~w~n ',[
+     %   c(e(est,S,  SS:SA, SB), e(est,D, DS:DA, DB))
+     % ]),
      add(SS,LA,SS1),
      ack(SA),!,
+     % format('~nhere~n'),
      _Pkg_::tcp_payload(Data).
    shift(   % ----> ACK
+       tcp,
        c(e(est,S, SS:SA, SB), e(est,D, DS:DA, DB)),
        c(e(est,S, SS:SA, SB), e(est,D, DS:DA, DB)),
        ack(S-D)
        ) :-
-     _Pkg_::tcp_addr(src-dst,S-D),
      _Pkg_::tcp_ack(SA),    % Check
      \+ _Pkg_::tcp_fin.
    shift(   % ----> ACK,Fin
+       tcp,
        c(e(est,S, SS:SA, SB), e(est,D, DS:DA, DB)),
        c(e(fw1,S, SS:SA, SB), e(cw, D, DS:DA, DB)),
        fin_start(S-D)
        ) :-
-     _Pkg_::tcp_addr(src-dst,S-D),
      _Pkg_::tcp_ack(SA),    % Check
      _Pkg_::tcp_fin,!.
-   shift(   % <---- Ack
-       c(e(fw1,S, SS:SA, SB), e(cw, D, DS:DA, DB)),
-       c(e(fw2,S, SS:SA, SB), e(cw, D, DS:DA, DB)),
-       backward(fin_ack(S-D))
+   shift(   % ----> Ack (finalizing)
+       tcp,
+       c(e(cw, S, SS:SA, SB), e(fw1, D, DS:DA, DB)),
+       c(e(cw, S, SS:SA, SB), e(fw1, D, DS:DA, DB)),
+       fin_ack(S-D)
        ) :-
-     _Pkg_::tcp_addr(src-dst,D-S),  % Backward
-     conn_ack(DA,_),!.
-   shift(   % <---- Ack,Fin
-       c(e(fw1,S, SS:SA, SB),    e(cw, D, DS:DA, DB)),
-       c(e(closed,S, SS:SA, SB), e(last, D, DS:DA, DB)),
-       backward(fin_ack(S-D))
+     % format('~nPKG:~w~n ',[
+     %   c(e(cw,S,  SS:SA, SB), e(fw1,D, DS:DA, DB))
+     % ]),
+     % debugger::trace,
+     conn_ack(SA,_),!.
+   shift(   % ----> Ack,Fin
+       tcp,
+       c(e(cw,  S, SS:SA, SB),   e(fw1,    D, DS:DA, DB)),
+       c(e(last,S, SS:SA, SB), e(closed, D, DS:DA, DB)),
+       fin_ack(S-D)
        ) :-
-     _Pkg_::tcp_addr(src-dst,D-S),
-     fin_ack(DA),!.
-   shift(   % <---- Ack,FIN
-       c(e(fw2,   S, SS:SA, SB), e(cw, D, DS:DA, DB)),
-       c(e(closed,S, SS:SA, SB), e(last, D, DS:DA, DB)),
-       backward(fin_fin(S-D))
+     fin_ack(SA),!.
+   shift(   % ----> Ack,FIN
+       tcp,
+       c(e(cw,    S, SS:SA, SB), e(fw2,    D, DS:DA, DB)),
+       c(e(last  ,S, SS:SA, SB), e(closed, D, DS:DA, DB)),
+       fin_fin(S-D)
        ) :-
-     _Pkg_::tcp_addr(src-dst,D-S),  % Backward
-     fin_ack(DA),!.
+     fin_ack(SA),!.
      % _Pkg_::tcp_flag(push), % TODO: Analyze payload,
      % format('PKG: ~n~w~n',[_Pkg_]),
      % _Pkg_::tcp_payload(Data),
    shift(   % ----> ACK
+       tcp,
        c(e(closed,S, SS:SA, SB), e(last,   D, DS:DA, DB)),
        c(e(closed,S, SS:SA, SB), e(closed, D, DS:DA, DB)),
        closed(S-D)
        ) :-
-     _Pkg_::tcp_addr(src-dst,S-D),
      conn_ack(SA,_),!.
 
    % reset
-   shift(   % <---- Rst
-       c(e(start, S, SS:SA, SB), e(none,   D,    _:_ ,DB)),
-       c(e(closed,S, SS:SA, SB), e(closed, D, none:DA, DB)),
-       backward(reset(S-D))
+   shift(   % ----> Rst
+       tcp,
+       c(e(none,  S,    _:_,  SB), e(start,  D, DS:DA, DB)),
+       c(e(closed,S, none:SA, SB), e(closed, D, DS:DA, DB)),
+       reset(S-D)
    ) :-
-     _Pkg_::tcp_addr(src-dst,D-S),  % opposite direction
      _Pkg_::tcp_flag(reset),
-     conn_ack(SS,DA),!.
+     conn_ack(DS,SA),!.
    % icmp
    shift(   % ---->
+       icmp,
        c(e(none, S, _,    SB),e(none,D, _,    DB)),
        c(e(none, S, none, SB),e(none,D, none, DB)),
        icmp(S-D)
@@ -369,14 +379,21 @@
 
    % forward direction
    shift(State, NextState, Event):-
-     state(_Pkg_)::shift(State, NextState, Event),
+     State=c(e(_,S,_,_),e(_,D,_,_)),
+     _Pkg_::tcp_addr(src-dst,S-D),!,
+     state(_Pkg_)::shift(tcp, State, NextState, Event),
      !.
    % in reverse direction
    shift(
      c(SE, DE), c(SE1,DE1), backward(Event)
    ):-
+     c(SE, DE)=c(e(_,S,_,_),e(_,D,_,_)),
+     _Pkg_::tcp_addr(src-dst,D-S),!,
+     format('~niiii~n'),
+     % debugger::trace,
      state(_Pkg_)::shift(
-     c(DE, SE), c(DE1,SE1), Event
+      tcp,
+      c(DE, SE), c(DE1,SE1), Event
    ),!.
    shift([s(State,_)|T],T, Event) :-
      shift(State, _, Event),
@@ -404,10 +421,10 @@
    :- dynamic(state/1).
    :- public(run/1).
    run(LastState) :-
-     % debugger::trace,
      init(State),
      assertz(state(State)),
      proceed(LastState).
+   :- use_module(user,[gtrace/0]).
    :- protected(proceed/1).
    proceed(LastState):-
      forall(
