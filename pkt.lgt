@@ -23,13 +23,14 @@
   option(wireshark_executable, '/usr/bin/tshark').
   option(test_db_name, 'pcap-small.db').
   option(db_name, 'pcap.db').
+  option(event_store_name, 'event.pl').
   % option()
 :- end_object.
 
 :- object(sniffing).
   :- public(current_pack/1).
   :- use_module(lists, [member/2]).
-  :- use_module(option, [option/2,option/3]).
+  :- use_module(library(option), [option/2,option/3]).
   :- public(layers/2).
   layers(json(Attrs), Layers):-
     option('_source'(json(Sources)),Attrs),
@@ -48,7 +49,7 @@
        attach_package_db/1,
        detach_package_db/0
      ]).
-  :- use_module(option, [option/2,option/3]).
+  :- use_module(library(option), [option/2,option/3]).
 
   :- public(connect_db/0).
   connect_db:-
@@ -58,9 +59,9 @@
   disconnect_db:-
     detach_package_db.
   current_pack(Pkg):-
-%    current_package(Pkg).
-    current_package(Pkg),
-    retract_package(Pkg).
+    current_package(Pkg).
+%    current_package(Pkg),
+%    retract_package(Pkg).
 
 :- end_object.
 
@@ -116,7 +117,7 @@
 
 
 :- object(packet(_Layers_)).
-   :- use_module(option, [option/2]).
+   :- use_module(library(option), [option/2]).
    :- use_module(lists, [member/2]).
 
    :- public(field/3).
@@ -127,8 +128,8 @@
      option(Option, Attrs).
    field(Option, Attrs):-
      Attrs\=json(_),
-     Option =.. [Name,Value],
-     split_ref(Name, Head, Tail),
+     Option =.. [Name,_],
+     split_ref(Name, Head, _),
      Op1 =.. [Head, JSON],
      option(Op1, Attrs),
      field(Option, JSON).
@@ -181,7 +182,7 @@
      field('eth.addr'(A),Tree).
    :- public(number/1).
    number(N):-
-     field('frame.number'(A)),
+     field('frame.number'(A)),!,
      atom_number(A,N).
    :- public(tcp_flag/2).
    tcp_flag(Flag,A):-
@@ -216,7 +217,6 @@
    :- public(tcp_payload/1).
    tcp_payload(Data):-
      field('tcp.payload'(Data)).
-
 :- end_object.
 
 :- object(state(_Pkg_)).
@@ -225,132 +225,141 @@
    :- public(add/3).
    add(A,B,C):-
      C is (A + B) mod 4294967296.
+
+   :- protected(tcpep/2). % tcp end point
+   %                state,     ip:port       syn:ack receive buffer
+   tcpep(Ip:Port, e(none,      Ip:Port,     none:none,  []         )).
+
    :- public(conn_none/2).
-   % TODO: sa(SYNA-ACKA,SYND-ACKD)
-   conn_none(A-D,
-     c(none-none,A-D,none)).
+   % TODO: sa(SYNS-ACKS,SYND-ACKD)
+   %         Addrs  SRC  DST       sa    receiver buffers
+   conn_none(S-D, c(SE,DE)) :-
+     tcpep(S,SE),
+     tcpep(D,DE).
 
    :- public(shift/3).
    shift(   % ---->
-       c(none-none,AD,_),
-       c(start-none,AD,sa(SA-none,none)),
-       initiate(AD)
+       c(e(none ,S,  _:SA, SB), e(none,D, DS:DA,DB)),
+       c(e(start,S, SS:SA, SB), e(none,D, DS:DA,DB)),
+       initiate(S-D)
        ) :-
-     _Pkg_::tcp_addr(src-dst,AD),
-     _Pkg_::tcp_seq(SA),    % Generated
+     _Pkg_::tcp_addr(src-dst,S-D),
+     _Pkg_::tcp_seq(SS),    % Generated
      \+ _Pkg_::tcp_fin,!.
    shift(   % <----
-       c(start-none, A-D,sa(SA-_,_)),
-       c(start-start,A-D,sa(SA-_,SeqD-AD)),
-       syn_back(A-D)
+       c(e(start,S, SS:SA, SB), e(none, D,  _:_ ,DB)),
+       c(e(start,S, SS:SA, SB), e(start,D, DS:DA,DB)),
+       backward(syn(S-D))
    ) :-
-     _Pkg_::tcp_addr(src-dst,D-A),  % opposite direction
-     inc(SA,AD),
-     _Pkg_::tcp_ack(AD),
-     _Pkg_::tcp_seq(SeqD),  % Generated
+     _Pkg_::tcp_addr(src-dst,D-S),  % opposite direction
+     inc(SS,DA),
+     _Pkg_::tcp_ack(DA),
+     _Pkg_::tcp_seq(DS),  % Generated
      \+ _Pkg_::tcp_fin,!.
    shift(   % ---->
-       c(start-start,A-D,sa(SA-_,SD-AD)),
-       c(est-est,A-D,sa(SA1-AA,SD-AD)),
-       established(A-D)
+       c(e(start,S, SS :_,  SB), e(start,D, DS:DA, DB)),
+       c(e(est  ,S, SS1:SA, SB), e(est  ,D, DS:DA, DB)),
+       established(S-D)
    ) :-
-     _Pkg_::tcp_addr(src-dst,A-D),  % opposite direction
-     inc(SD,AA),
-     inc(SA,SA1),
-     _Pkg_::tcp_ack(AA),
+     _Pkg_::tcp_addr(src-dst,S-D),
+     inc(DS,SA),
+     inc(SS,SS1),
+     _Pkg_::tcp_ack(SA),
      \+ _Pkg_::tcp_fin,!.
    % Pushing
    shift(   % ----> push
-       c(est-est,A-D,sa(SA-AA,SD-AD)),
-       c(est-est,A-D,sa(SA1-AA,AA-SA1)),
-       push(A-D,Data)
+       c(e(est,S,  SS:SA, SB), e(est,D, DS:DA, DB)),
+       c(e(est,S, SS1:SA, []), e(est,D, DS:DA, DB)),
+       push(S-D,[Data|SB])
     ) :-
+     _Pkg_::tcp_addr(src-dst,S-D),
      _Pkg_::tcp_push,
-     _Pkg_::tcp_ack(AA),
+     _Pkg_::tcp_ack(SA),
      _Pkg_::tcp_len(LA),
-     add(SA,LA,SA1),
+     add(SS,LA,SS1),
      \+ _Pkg_::tcp_fin,!,
      _Pkg_::tcp_payload(Data).
    shift(   % ----> ACK
-       c(est-est,A-D,sa(SD-AD,SA-AA)),
-       c(est-est,A-D,sa(SD-AD,SA-AA)),
-       ack(A-D)
+       c(e(est,S, SS:SA, SB), e(est,D, DS:DA, DB)),
+       c(e(est,S, SS:SA, SB), e(est,D, DS:DA, DB)),
+       ack(S-D)
        ) :-
-     _Pkg_::tcp_addr(src-dst,A-D),
-     _Pkg_::tcp_ack(AD),    % Check
+     _Pkg_::tcp_addr(src-dst,S-D),
+     _Pkg_::tcp_ack(SA),    % Check
      \+ _Pkg_::tcp_fin.
    shift(   % ----> ACK,Fin
-       c(est-est,A-D,sa(SD-AD,SA-AA)),
-       c(fw1-cw,A-D,sa(SD-AD,SA-AA)),
-       fin_start(A-D)
+       c(e(est,S, SS:SA, SB), e(est,D, DS:DA, DB)),
+       c(e(fw1,S, SS:SA, SB), e(cw, D, DS:DA, DB)),
+       fin_start(S-D)
        ) :-
-     _Pkg_::tcp_addr(src-dst,A-D),
-     _Pkg_::tcp_ack(AD),    % Check
+     _Pkg_::tcp_addr(src-dst,S-D),
+     _Pkg_::tcp_ack(SA),    % Check
      _Pkg_::tcp_fin,!.
    shift(   % <---- Ack
-       c(fw1-cw,A-D,sa(SD-AD,SA-AA)),
-       c(fw2-cw,A-D,sa(SD-AD,SA-AA)),
-       fin_ack(A-D)
+       c(e(fw1,S, SS:SA, SB), e(cw, D, DS:DA, DB)),
+       c(e(fw2,S, SS:SA, SB), e(cw, D, DS:DA, DB)),
+       backward(fin_ack(S-D))
        ) :-
-     _Pkg_::tcp_addr(src-dst,D-A),
-     inc(AA,AA1),
-     _Pkg_::tcp_ack(AA1),    % Check
+     _Pkg_::tcp_addr(src-dst,D-S),  % Backward
+     inc(DA,DA1),
+     _Pkg_::tcp_ack(DA1),    % Check
      \+ _Pkg_::tcp_fin,!.
    shift(   % <---- Ack,Fin
-       c(fw1-cw,A-D,sa(SD-AD,SA-AA)),
-       c(closed-last,A-D,sa(SD-AD,SA-AA)),
-       fin_ack(A-D)
+       c(e(fw1,S, SS:SA, SB),    e(cw, D, DS:DA, DB)),
+       c(e(closed,S, SS:SA, SB), e(last, D, DS:DA, DB)),
+       backward(fin_ack(S-D))
        ) :-
-     _Pkg_::tcp_addr(src-dst,D-A),
-     inc(AA,AA1),
-     _Pkg_::tcp_ack(AA1),    % Check
+     _Pkg_::tcp_addr(src-dst,D-S),
+     inc(DA,DA1),
+     _Pkg_::tcp_ack(DA1),    % Check
      _Pkg_::tcp_fin,!.
    shift(   % <---- Ack,FIN
-       c(fw2-cw,A-D,sa(SD-AD,SA-AA)),
-       c(closed-last,A-D,sa(SD-AD,SA-AA)),
-       fin_fin(A-D)
+       c(e(fw2,   S, SS:SA, SB), e(cw, D, DS:DA, DB)),
+       c(e(closed,S, SS:SA, SB), e(last, D, DS:DA, DB)),
+       backward(fin_fin(S-D))
        ) :-
-     _Pkg_::tcp_addr(src-dst,D-A),
-     inc(AA,AA1),
-     _Pkg_::tcp_ack(AA1),    % Check
+     _Pkg_::tcp_addr(src-dst,D-S),  % Backward
+     inc(DA,DA1),
+     _Pkg_::tcp_ack(DA1),    % Check
      _Pkg_::tcp_fin,!.
      % _Pkg_::tcp_flag(push), % TODO: Analyze payload,
      % format('PKG: ~n~w~n',[_Pkg_]),
      % _Pkg_::tcp_payload(Data),
    shift(   % ----> ACK
-       c(closed-last,A-D,sa(SD-AD,SA-AA)),
-       c(closed-closed,A-D,sa(SD-AD,SA-AA)),
-       closed(A-D)
+       c(e(closed,S, SS:SA, SB), e(last,   D, DS:DA, DB)),
+       c(e(closed,S, SS:SA, SB), e(closed, D, DS:DA, DB)),
+       closed(S-D)
        ) :-
-     _Pkg_::tcp_addr(src-dst,A-D),
-     inc(AD,AD1),
-     _Pkg_::tcp_ack(AD1),    % Check
+     _Pkg_::tcp_addr(src-dst,S-D),
+     inc(SA,SA1),
+     _Pkg_::tcp_ack(SA1),    % Check
      \+ _Pkg_::tcp_fin,!.
 
    % reset
    shift(   % <---- Rst
-       c(start-none,   S-D,sa(SS-SA,_)),
-       c(closed-closed,S-D,sa(SS-SA,none-DA)),
-       reset(S-D)
+       c(e(start, S, SS:SA, SB), e(none,   D,    _:_ ,DB)),
+       c(e(closed,S, SS:SA, SB), e(closed, D, none:DA, DB)),
+       backward(reset(S-D))
    ) :-
      _Pkg_::tcp_addr(src-dst,D-S),  % opposite direction
-     % debugger::trace,
      inc(SS,DA),
      _Pkg_::tcp_ack(DA),
      _Pkg_::tcp_flag(reset),
      \+ _Pkg_::tcp_fin,!.
    % icmp
    shift(   % ---->
-       c(none-none,S-D,_),
-       c(none-none,S-D,none),
+       c(e(none, S, _,    SB),e(none,D, _,    DB)),
+       c(e(none, S, none, SB),e(none,D, none, DB)),
        icmp(S-D)
        ) :-
      _Pkg_::field('ip.proto'('1')),
      % debugger::trace,
-     _Pkg_::ip_addr(src-dst,AD),
-     \+ _Pkg_::tcp_fin,!.
+     _Pkg_::ip_addr(src-dst,S-D),!.
 :- end_object.
 
+:- object(receiver).
+   :- public(event/1).
+:- end_object.
 
 :- object(connections(_Pkg_)).
    :- public(shift/3).
@@ -358,8 +367,8 @@
      _Pkg_::number(N),
      % (N>=25000,!,
      % debugger::trace;true),
-     state(_Pkg_)::conn_none(A-B,S),!,
-     shift(S,NewState,Event),!.
+     state(_Pkg_)::conn_none(_-_,InitialState),!,
+     shift(InitialState,NewState,Event),!.
 
    % forward direction
    shift(State, NextState, Event):-
@@ -367,14 +376,10 @@
      !.
    % in reverse direction
    shift(
-     c(StS-StD  ,S-D,sa(SS-AS,  SD-AD  )),
-     c(StS1-StD1,S-D,sa(SS1-AS1,SD1-AD1)),
-     backward(Event)
+     c(SE, DE), c(SE1,DE1), backward(Event)
    ):-
      state(_Pkg_)::shift(
-       c(StD-StS  ,D-S,sa(SD-AD  ,SS-AS  )),
-       c(StD1-StS1,D-S,sa(SD1-AD1,SS1-AS1)),
-       Event
+     c(DE, SE), c(DE1,SE1), Event
    ),!.
    shift([s(State,_)|T],T, Event) :-
      shift(State, _, Event),
@@ -392,7 +397,7 @@
    final_state(icmp(_)).
 :- end_object.
 
-:- object(analyzer(_Sniffing_)).
+:- object(analyzer(_Sniffing_,_Receiver_)).
    :- protected(current_pack/1).
    current_pack(packet(Layers)) :-
      _Sniffing_::current_pack(json(Layers)).
@@ -404,16 +409,17 @@
    run(LastState) :-
      % debugger::trace,
      init(State),
-     assert(state(State)),
+     assertz(state(State)),
      proceed(LastState).
    :- protected(proceed/1).
    proceed(LastState):-
      forall(
        (
          current_pack(Pkg),
+         % format('~nP ~n'),
          Pkg::number(PkgN),
-         % PkgN>=29055,
-         PkgN<25000,
+         PkgN>=17550,
+         % PkgN<25000,
          format('~nPKG ~w~n',[PkgN]),
          true
        ),
@@ -421,10 +427,29 @@
          state(State),
          format('Current State ~w ~n',[State]),
          connections(Pkg)::shift(State,NextState,Event),
-         format('Event ~w ~n',[Event]),
-         retract(state(State)),
-         assert(state(NextState))
+         format('Event ~w ~n',[Event]),!,
+         _Receiver_::event(Event),!,
+         retract(state(State)),!,
+         assertz(state(NextState))
        )
      ),
      state(LastState).
+:- end_object.
+
+:- object(event_saver(_FileName_), extends(receiver)).
+   :- protected(stream/1).
+   :- dynamic(stream/1).
+   :- public(connect/0).
+   connect :-
+     open(_FileName_, write, Stream),!,
+     assertz(stream(Stream)),
+     !.
+   :- public(disconnect/0).
+   disconnect :-
+     retract(stream(Stream)),!,
+     close(Stream),!.
+   event(Event) :-
+     stream(Stream), !,
+     % debugger::trace,
+     format(Stream, '~k.~n', [Event]),!.
 :- end_object.

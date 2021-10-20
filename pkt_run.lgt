@@ -2,8 +2,8 @@
 :- use_module(library(pprint),[print_term/2]).
 
 :- object(pkt_run).
-  :- use_module(option, [option/2]).
-  :- use_module(pprint,[print_term/2]).
+  :- use_module(library(option), [option/2]).
+  :- use_module(library(pprint), [print_term/2]).
 
   :- public(run/0).
   run:-
@@ -60,8 +60,12 @@
     true.
 
   analyze:-
+    pcap_config::current_option(event_store_name, FileName),
     connect_sniffer(Snif),
-    analyzer(Snif)::run(LastState),
+    Saver = event_saver(FileName),
+    Saver::connect,
+    analyzer(Snif, Saver)::run(LastState),
+    Saver::disconnect,
     format('LastState:~w~n',[LastState]).
 
   test_split:-
