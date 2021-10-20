@@ -237,6 +237,18 @@
      tcpep(S,SE),
      tcpep(D,DE).
 
+   ack(A):-
+     _Pkg_::tcp_ack(A),
+     \+ _Pkg_::tcp_fin.
+   conn_ack(A,A1):-
+     inc(A,A1),
+     _Pkg_::tcp_ack(A1),
+     \+ _Pkg_::tcp_fin.
+   fin_ack(A):-
+     inc(A,A1),
+     _Pkg_::tcp_ack(A1),
+     _Pkg_::tcp_fin.
+
    :- public(shift/3).
    shift(   % ---->
        c(e(none ,S,  _:SA, SB), e(none,D, DS:DA,DB)),
@@ -252,20 +264,16 @@
        backward(syn(S-D))
    ) :-
      _Pkg_::tcp_addr(src-dst,D-S),  % opposite direction
-     inc(SS,DA),
-     _Pkg_::tcp_ack(DA),
      _Pkg_::tcp_seq(DS),  % Generated
-     \+ _Pkg_::tcp_fin,!.
+     conn_ack(SS,DA),!.
    shift(   % ---->
        c(e(start,S, SS :_,  SB), e(start,D, DS:DA, DB)),
        c(e(est  ,S, SS1:SA, SB), e(est  ,D, DS:DA, DB)),
        established(S-D)
    ) :-
      _Pkg_::tcp_addr(src-dst,S-D),
-     inc(DS,SA),
      inc(SS,SS1),
-     _Pkg_::tcp_ack(SA),
-     \+ _Pkg_::tcp_fin,!.
+     conn_ack(DS,SA),!.
    % Pushing
    shift(   % ----> push
        c(e(est,S,  SS:SA, SB), e(est,D, DS:DA, DB)),
@@ -274,10 +282,9 @@
     ) :-
      _Pkg_::tcp_addr(src-dst,S-D),
      _Pkg_::tcp_push,
-     _Pkg_::tcp_ack(SA),
      _Pkg_::tcp_len(LA),
      add(SS,LA,SS1),
-     \+ _Pkg_::tcp_fin,!,
+     ack(SA),!,
      _Pkg_::tcp_payload(Data).
    shift(   % ----> ACK
        c(e(est,S, SS:SA, SB), e(est,D, DS:DA, DB)),
@@ -301,27 +308,21 @@
        backward(fin_ack(S-D))
        ) :-
      _Pkg_::tcp_addr(src-dst,D-S),  % Backward
-     inc(DA,DA1),
-     _Pkg_::tcp_ack(DA1),    % Check
-     \+ _Pkg_::tcp_fin,!.
+     conn_ack(DA,_),!.
    shift(   % <---- Ack,Fin
        c(e(fw1,S, SS:SA, SB),    e(cw, D, DS:DA, DB)),
        c(e(closed,S, SS:SA, SB), e(last, D, DS:DA, DB)),
        backward(fin_ack(S-D))
        ) :-
      _Pkg_::tcp_addr(src-dst,D-S),
-     inc(DA,DA1),
-     _Pkg_::tcp_ack(DA1),    % Check
-     _Pkg_::tcp_fin,!.
+     fin_ack(DA),!.
    shift(   % <---- Ack,FIN
        c(e(fw2,   S, SS:SA, SB), e(cw, D, DS:DA, DB)),
        c(e(closed,S, SS:SA, SB), e(last, D, DS:DA, DB)),
        backward(fin_fin(S-D))
        ) :-
      _Pkg_::tcp_addr(src-dst,D-S),  % Backward
-     inc(DA,DA1),
-     _Pkg_::tcp_ack(DA1),    % Check
-     _Pkg_::tcp_fin,!.
+     fin_ack(DA),!.
      % _Pkg_::tcp_flag(push), % TODO: Analyze payload,
      % format('PKG: ~n~w~n',[_Pkg_]),
      % _Pkg_::tcp_payload(Data),
@@ -331,9 +332,7 @@
        closed(S-D)
        ) :-
      _Pkg_::tcp_addr(src-dst,S-D),
-     inc(SA,SA1),
-     _Pkg_::tcp_ack(SA1),    % Check
-     \+ _Pkg_::tcp_fin,!.
+     conn_ack(SA,_),!.
 
    % reset
    shift(   % <---- Rst
@@ -342,10 +341,8 @@
        backward(reset(S-D))
    ) :-
      _Pkg_::tcp_addr(src-dst,D-S),  % opposite direction
-     inc(SS,DA),
-     _Pkg_::tcp_ack(DA),
      _Pkg_::tcp_flag(reset),
-     \+ _Pkg_::tcp_fin,!.
+     conn_ack(SS,DA),!.
    % icmp
    shift(   % ---->
        c(e(none, S, _,    SB),e(none,D, _,    DB)),
@@ -418,7 +415,7 @@
          current_pack(Pkg),
          % format('~nP ~n'),
          Pkg::number(PkgN),
-         PkgN>=17550,
+         % PkgN>=17550,
          % PkgN<25000,
          format('~nPKG ~w~n',[PkgN]),
          true
