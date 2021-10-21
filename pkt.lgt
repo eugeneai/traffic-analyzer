@@ -118,25 +118,72 @@
 
 :- object(packet(_Layers_)).
    :- use_module(library(option), [option/2]).
-   :- use_module(lists, [member/2]).
+   :- use_module(lists, [member/2,append/3]).
 
-   :- public(field/3).
+   :- protected(path/2).
+   :- dynamic(path/2).
+
+   update_path(Option, SubPath) :-
+     Option=..[Name,_],
+     % debugger::trace,
+     (
+      path(Name, Path) ->
+        P=Path ;
+        P = []
+     ),
+     % format('~nUPDATE ~w as ~w adding ~w~n', [Name, P, SubPath]),
+     (
+       P = [SubPath|_] ->
+        true ;
+        retractall(path(Name, Path)),
+        assertz(path(Name, [SubPath|P]))
+     ).  % ! Reverse order
+
+   :- public(print_paths/2).
+   print_paths(Option, Path) :-
+     forall(path(Option, Path), format('~w->~w~n',[Option, Path])).
+
+   :- protected(field/3).
+   field([],A,A).
+   field([Subpath|T],A,Value):-
+     field(T,A,Attrs),  % ! Reverse order
+     Segment=..[Subpath, json(Value)],
+     % ( Attrs==json(_)-> format('~nBAD TYPE Attrs 2~n');true ),
+     option(Segment,Attrs).
+
+   :- public(field/2).
    field(Option, json(Attrs)):-
-     field(Option, Attrs).
+     field(Option, Attrs),!.
    field(Option, Attrs):-
      Attrs\=json(_),
-     option(Option, Attrs).
+     option(Option, Attrs),!.
+
+   field(Option, Attrs):-
+     Option=..[Name,_],
+     path(Name, Path),!,
+     field(Path, Attrs, SubTree),
+     % debugger::trace,
+     field(Option, SubTree).
    field(Option, Attrs):-
      Attrs\=json(_),
      Option =.. [Name,_],
      split_ref(Name, Head, _),
-     Op1 =.. [Head, JSON],
+     Op1 =.. [Head, json(JSON)],
      option(Op1, Attrs),
-     field(Option, JSON).
-   field(Option, Attrs):-
-     Attrs\=json(_),
-     member(_=json(A),Attrs),
-     field(Option, A).
+     % format('UPDATE REQ1'),
+     update_path(Option,Head),
+     field(Option, JSON),!.
+   % field(Option, Attrs):-
+   %   Attrs\=json(_),
+   %   member(SubPath=json(A),Attrs),
+   %   format('TRY ~k on ~w in ~w subtree ~n',[Option, A, SubPath]),
+   %   field(Option, A),
+   %   format('UPDATE REQ2'),
+   %   update_path(Option, SubPath).
+
+   :- public(field/1).
+   field(Option):-
+     field(Option, _Layers_).
 
    :- public(split_ref/3).
    split_ref(Atom,Ref,Refs):-
@@ -145,10 +192,6 @@
      S is B+1,
      sub_atom(Atom,S,TL,0,Refs),
      sub_atom(Atom,0,B ,_,Ref),!.
-
-   :- public(field/1).
-   field(Option):-
-     field(Option, _Layers_).
 
    :- public(tcp_addr/2).
    tcp_addr(src, A:P):-
@@ -162,6 +205,7 @@
    tcp_addr(src-dst,S-D):-
      tcp_addr(src,S),
      tcp_addr(dst,D).
+
    :- public(ip_addr/2).
    ip_addr(src,S) :-
      field('ip.src'(S)).
@@ -170,9 +214,11 @@
    ip_addr(src-dst,S-D) :-
      ip_addr(src,S),
      ip_addr(dst,D).
+
    :- public(time/2).
    time(abs,A):-
      field('frame.time_epoch'(A)).
+
    :- public(eth_addr/2).
    eth_addr(src,A):-
      field('eth.src_tree'(json(Tree))),
@@ -180,10 +226,12 @@
    eth_addr(dst,A):-
      field('eth.dst_tree'(json(Tree))),
      field('eth.addr'(A),Tree).
+
    :- public(number/1).
    number(N):-
      field('frame.number'(A)),!,
      atom_number(A,N).
+
    :- public(tcp_flag/2).
    tcp_flag(Flag,A):-
      member(Flag,[ns,cwr,ecn,urg,ack,push,reset,syn,fin]),
@@ -191,29 +239,36 @@
      atom_concat('tcp.flags.',Flag,F),
      Q =.. [F,A],
      field(Q,T).
+
    :- public(tcp_flag/1).
    tcp_flag(Flag):-
      tcp_flag(Flag,'1').
+
    :- public(tcp_fin/0).
    tcp_fin :-
      tcp_flag(fin).
+
    :- public(tcp_push/0).
    tcp_push :-
      tcp_flag(push).
+
    :- public(tcp_ack/1).
    tcp_ack(N):-
      tcp_flag(ack),
      field('tcp.ack_raw'(A)),
      atom_number(A,N).
+
    :- public(tcp_seq/1).
    tcp_seq(N):-
      tcp_flag(syn),
      field('tcp.seq_raw'(A)),
      atom_number(A,N).
+
    :- public(tcp_len/1).
    tcp_len(N):-
      field('tcp.len'(A)),
      atom_number(A,N).
+
    :- public(tcp_payload/1).
    tcp_payload(Data):-
      field('tcp.payload'(Data)).
@@ -417,9 +472,12 @@
    shift(State, NextState, Event):-
      State=c(e(none,S:_,_,_),e(none,D:_,_,_)),
      _Pkg_::ip_addr(src-dst,S-D),!,
-     format('~nicmp ~w~n',[S-D]),
+     % format('~nicmp ~w~n',[S-D]),
      state(_Pkg_)::shift(ip, State, NextState, Event),
      !.
+   shift([s(State,_)|T],NT, [removed(closed(S-D)),Event]) :-
+     State=c(e(closed,S:_,_,_),e(closed,D:_,_,_)),!,
+     shift(T,NT,Event).
    shift([s(State,_)|T],T, Event) :-
      shift(State, _, Event),
      final_state(Event),!.
@@ -434,6 +492,7 @@
    final_state(closed(_)).
    final_state(reset(_)).
    final_state(icmp(_)).
+   final_state(removed(_)).
 :- end_object.
 
 :- object(analyzer(_Sniffing_,_Receiver_)).
@@ -450,8 +509,10 @@
      assertz(state(State)),
      proceed(LastState).
    :- use_module(user,[gtrace/0]).
+   :- use_module(lists,[member/2]).
    :- protected(proceed/1).
    proceed(LastState):-
+     nl,
      forall(
        (
          current_pack(Pkg),
@@ -459,20 +520,24 @@
          Pkg::number(PkgN),
          % PkgN>=25010,
          % PkgN<25000,
-         format('~nPKG ~w~n',[PkgN]),
+         format('PKG ~w~n',[PkgN]),
          true
        ),
        (
          state(State),
-         format('Current State ~w ~n',[State]),
+         % format('Current State ~w ~n',[State]),
          connections(Pkg)::shift(State,NextState,Event),
          format('Event ~w ~n',[Event]),!,
          _Receiver_::event(Event,PkgN),!,
          retract(state(State)),!,
-         assertz(state(NextState))
+         assertz(state(NextState)),
+         % Pkg::print_paths(_,_)
+         true
        )
      ),
-     state(LastState).
+     state(LastState),
+     forall(member(X,LastState),
+      _Receiver_::event(removed(state(X)))).
 :- end_object.
 
 :- object(event_saver(_FileName_), extends(event_receiver)).
