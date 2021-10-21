@@ -537,7 +537,7 @@
      ),
      state(LastState),
      forall(member(X,LastState),
-      _Receiver_::event(removed(state(X)))).
+      _Receiver_::event(removed(state(X)),none)).
 :- end_object.
 
 :- object(event_saver(_FileName_), extends(event_receiver)).

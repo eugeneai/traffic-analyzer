@@ -17,8 +17,8 @@
     pcap('ih-tmp/very-total.pcap','tcp.len>0 or icmp')::load.
 
   connect_sniffer(Snif) :-
-    pcap_config::current_option(db_name,DBFile),
-    % pcap_config::current_option(test_db_name,DBFile),
+    % pcap_config::current_option(db_name,DBFile),
+    pcap_config::current_option(test_db_name,DBFile),
     Snif=db(DBFile),
     Snif::connect_db.
 
