@@ -10,6 +10,7 @@
      detach_package_db
    ]).
 :- use_module(library(option),[option/2,option/3]).
+:- use_module(library(pcre),[re_replace/4]).
 
 :- object(pcap_config).
   :- public([current_option/1, current_option/2]).
@@ -23,6 +24,7 @@
   option(wireshark_executable, '/usr/bin/tshark').
   option(test_db_name, 'pcap-small.db').
   option(db_name, 'pcap.db').
+  option(message_store_name, 'messages.pl').
   option(event_store_name, 'event.pl').
   % option()
 :- end_object.
@@ -321,7 +323,7 @@
        tcp,
        c(e(none ,S,  _:SA, SB), e(none,D, DS:DA,DB)),
        c(e(start,S, SS:SA, SB), e(none,D, DS:DA,DB)),
-       initiate(S-D)
+       init
        ) :-
      _Pkg_::tcp_seq(SS),    % Generated
      \+ _Pkg_::tcp_fin,!.
@@ -330,7 +332,7 @@
        tcp,
        c(e(none, S,  _:_,  SB), e(start,D, DS:DA ,DB)),
        c(e(start,S, SS:SA, SB), e(start,D, DS:DA,DB)),
-       syn(S-D)
+       syn
    ) :-
      _Pkg_::tcp_seq(SS),  % Generated
      conn_ack(DS,SA),!.
@@ -339,8 +341,7 @@
        tcp,
        c(e(start,S, SS :_,  SB), e(start,D, DS:DA, DB)),
        c(e(est  ,S, SS1:SA, SB), e(est  ,D, SA:DA, DB)),
-       %                                     ^
-       established(S-D)
+       established
    ) :-
      inc(SS,SS1),
      conn_ack(DS,SA),!.
@@ -350,7 +351,7 @@
        tcp,
        c(e(est,S,  SS:SA, SB), e(est,D, DS:_,   DB)),
        c(e(est,S, SS1:SA, SB), e(est,D, DS:SS1, [])),
-       push(S-D,DB1)
+       push(DB1)
     ) :-
      _Pkg_::tcp_push,
      tcp_payload(SS,SS1, DB, DB1),
@@ -360,7 +361,7 @@
        tcp,
        c(e(est,S,  SS:SA, SB), e(est,D, DS:_, DB)),
        c(e(est,S, SS1:SA, SB), e(est,D, DS:SS1, DB1)),
-       ack(S-D)
+       ack
        ) :-
      _Pkg_::tcp_ack(GSA),
      GSA=<SA,             % Check and late ack
@@ -371,7 +372,7 @@
        tcp,
        c(e(est,S, SS:SA, SB), e(est,D, DS:DA, DB)),
        c(e(fw1,S, SS:SA, SB), e(cw, D, DS:DA, DB)),
-       fin_start(S-D)
+       fin_start
        ) :-
      _Pkg_::tcp_ack(SA),    % Check
      _Pkg_::tcp_fin,!.
@@ -380,7 +381,7 @@
        tcp,
        c(e(cw, S, SS:SA, SB), e(fw1, D, DS:DA, DB)),
        c(e(cw, S, SS:SA, SB), e(fw1, D, DS:DA, DB)),
-       fin_ack(S-D)
+       fin_ack
        ) :-
      % format('~nPKG:~w~n ',[
      %   c(e(cw,S,  SS:SA, SB), e(fw1,D, DS:DA, DB))
@@ -392,7 +393,7 @@
        tcp,
        c(e(cw,  S, SS:SA, SB),   e(fw1,    D, DS:DA, DB)),
        c(e(last,S, SS:SA, SB), e(closed, D, DS:DA, DB)),
-       fin_ack(S-D)
+       fin_ack
        ) :-
      fin_ack(SA),!.
 
@@ -400,7 +401,7 @@
        tcp,
        c(e(cw,    S, SS:SA, SB), e(fw2,    D, DS:DA, DB)),
        c(e(last  ,S, SS1:SA, SB), e(closed, D, DS:DA, [])),
-       [push(S-D,DB1),fin_fin(S-D)]
+       [push(DB1),fin_fin]
        ) :-
      fin_ack(SA),!,
      tcp_payload(SS,SS1, DB,DB1).
@@ -409,7 +410,7 @@
        tcp,
        c(e(closed,S, SS:SA, SB), e(last,   D, DS:DA, DB)),
        c(e(closed,S, SS:SA, SB), e(closed, D, DS:DA, DB)),
-       closed(S-D)
+       closed
        ) :-
      conn_ack(SA,_),!.
 
@@ -418,7 +419,7 @@
        tcp,
        c(e(none,  S,    _:_,  SB), e(start,  D, DS:DA, DB)),
        c(e(closed,S, none:SA, SB), e(closed, D, DS:DA, DB)),
-       reset(S-D)
+       reset
    ) :-
      _Pkg_::tcp_flag(reset),
      conn_ack(DS,SA),!.
@@ -428,7 +429,7 @@
        ip,
        c(e(none, S, _,    SB),e(none,D, _,    DB)),
        c(e(none, S, none, SB),e(none,D, none, DB)),
-       icmp(S-D)
+       icmp
        ) :-
      % debugger::trace,
      _Pkg_::field('ip.proto'('1')).
@@ -436,6 +437,7 @@
 
 :- object(event_receiver).
    :- public(event/2).
+   :- public(event/1).
 :- end_object.
 
 :- object(connections(_Pkg_)).
@@ -453,14 +455,14 @@
      ).
 
    % forward direction
-   shift(State, NextState, Event):-
+   shift(State, NextState, e(Event,S-D)):-
      State=c(e(_,S,_,_),e(_,D,_,_)),
      _Pkg_::tcp_addr(src-dst,S-D),!,
      state(_Pkg_)::shift(tcp, State, NextState, Event),
      !.
    % in reverse direction
    shift(
-     c(SE, DE), c(SE1,DE1), backward(Event)
+     c(SE, DE), c(SE1,DE1), backward(e(Event,S-D))
    ):-
      c(SE, DE)=c(e(_,S,_,_),e(_,D,_,_)),
      _Pkg_::tcp_addr(src-dst,D-S),!,
@@ -469,7 +471,7 @@
       c(DE, SE), c(DE1,SE1), Event
    ),!.
    % ICMP/IP
-   shift(State, NextState, Event):-
+   shift(State, NextState, e(Event,S-D)):-
      State=c(e(none,S:_,_,_),e(none,D:_,_,_)),
      _Pkg_::ip_addr(src-dst,S-D),!,
      % format('~nicmp ~w~n',[S-D]),
@@ -489,10 +491,10 @@
    shift([X|T],[X|R],Event) :-
      shift(T, R, Event),!.
    :- protected(final_state/1).
-   final_state(closed(_)).
-   final_state(reset(_)).
-   final_state(icmp(_)).
-   final_state(removed(_)).
+   final_state(closed).
+   final_state(reset).
+   final_state(icmp).
+   final_state(removed).
 :- end_object.
 
 :- object(analyzer(_Sniffing_,_Receiver_)).
@@ -540,6 +542,85 @@
       _Receiver_::event(removed(state(X)),none)).
 :- end_object.
 
+
+:- object(message_analyzer(_Events_, _Receiver_)).
+   :- protected(current_event/2).
+   current_event(Ev, PkgN) :-
+     _Events_::current_term(event(PkgN, Ev)).
+   :- protected(event/1).
+   event(Ev):-
+     _Receiver_::event(Ev).
+   :- protected(event/2).
+   event(Ev,Mark):-
+     _Receiver_::event(Ev, Mark).
+
+   :- public(run/0).
+   run :-
+      init,
+      forall(
+        current_event(Ev, PkgN),
+        analyze(Ev, PkgN)).
+
+   :- dynamic(conn/2).
+   :- private(conn/2).
+   :- protected(current_conn/2).
+   current_conn(Client,Server):-
+     conn(Client,Server).
+
+   :- protected(init/0).
+   init.
+
+   :- protected(analyze/2).
+   analyze(Event, PkgN) :-
+     format('A: ~w ~w ~n',[PkgN,Event]),
+     event(Event).
+
+   :- use_module(library(pcre),[re_replace/4]).
+   :- use_module(library(crypto),[hex_bytes/2]).
+   :- use_module(lists,[append/3]).
+   :- use_module(user,[open_codes_stream/2]).
+
+   :- protected(buffer_bytes/2).
+   buffer_bytes([], []).
+   buffer_bytes([X|T], R) :-
+     buffer_bytes(T, R1),
+     buffer_bytes(X, BX),
+     append(R1, BX, R).
+   buffer_bytes(Buf, Bytes) :-
+     re_replace(':'/g, '', Buf, Str),
+     hex_bytes(Str, Bytes).
+
+   :- protected(buffer_string/2).
+   buffer_string(Buf, Str) :-
+     buffer_bytes(Buf, Bytes),
+     string_chars(Str,Bytes).
+
+   :- protected(open_buffer/2).
+   open_buffer(Buf, Stream) :-
+     buffer_bytes(Buf, Bytes),
+     open_codes_stream(Bytes, Stream).
+
+   :- public(bytes_dump/1).
+   bytes_dump(Bytes) :-
+     open_codes_stream(Bytes, Stream),
+     nl,
+     forall(read_string(Stream, 16, S),
+       (
+         hex_bytes(S, Bytes),
+         format('~w  ~w~n',[Bytes, S])
+       )
+     ).
+
+   :- public(buffer_dump/1).
+   buffer_dump(Buf) :-
+     buffer_bytes(Buf, Bytes),
+     bytes_dump(Bytes).
+
+:- end_object.
+
+
+% Util objects ---- might be make them the same?
+
 :- object(event_saver(_FileName_), extends(event_receiver)).
    :- protected(stream/1).
    :- dynamic(stream/1).
@@ -559,4 +640,26 @@
    event(Event, N) :-
      stream(Stream), !,
      format(Stream, '~k.~n', [event(N,Event)]),!.
+
+   % Event without mark note is none-marked event.
+   event(Event):-
+     event(Event, none).
+:- end_object.
+
+:- object(term_reader(_FileName_)).
+
+   :- use_module(user, [setup_call_cleanup/3]).
+
+   :- public(current_term/1).
+   current_term(T):-
+     setup_call_cleanup(open(_FileName_, read, Stream, []),
+       current_term(Stream, T),
+       close(Stream)).
+
+   current_term(Stream, T) :-
+     repeat,
+     (read_term(Stream, T0, []),
+      T0 \= end_of_file
+      -> T=T0 ; !, fail).
+
 :- end_object.

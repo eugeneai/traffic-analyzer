@@ -7,8 +7,9 @@
 
   :- public(run/0).
   run:-
-    analyze.
-    % test_split.
+    % analyze(messages).
+    %analyze(frames).
+    test_reader.
 
   load_all_tcp_icmp:-
     pcap('ih-tmp/very-total.pcap','tcp or icmp')::load.
@@ -17,8 +18,8 @@
     pcap('ih-tmp/very-total.pcap','tcp.len>0 or icmp')::load.
 
   connect_sniffer(Snif) :-
-    % pcap_config::current_option(db_name,DBFile),
-    pcap_config::current_option(test_db_name,DBFile),
+    pcap_config::current_option(db_name,DBFile),
+    % pcap_config::current_option(test_db_name,DBFile),
     Snif=db(DBFile),
     Snif::connect_db.
 
@@ -59,7 +60,7 @@
     format('conn_e_e3:~w~n',[ConnEstEst3]),
     true.
 
-  analyze:-
+  analyze(frames):-
     pcap_config::current_option(event_store_name, FileName),
     connect_sniffer(Snif),
     Saver = event_saver(FileName),
@@ -67,6 +68,22 @@
     analyzer(Snif, Saver)::run(LastState),
     Saver::disconnect,
     format('LastState:~w~n',[LastState]).
+
+  analyze(messages):-
+    pcap_config::current_option(event_store_name, StoreName),
+    pcap_config::current_option(message_store_name, MessageName),
+    Events = term_reader(StoreName),
+    Events::connect,
+    Saver = event_saver(MessageName),
+    Saver::connect,
+    message_analyzer(Events,Saver)::run,
+    Saver::disconnect,
+    Events::disconnect.
+
+  test_reader:-
+    pcap_config::current_option(event_store_name, StoreName),
+    Events = term_reader(StoreName),
+    forall(Events::current_term(T), format('~w~n',[T])).
 
   test_split:-
     Atom='ip.src.addr',
