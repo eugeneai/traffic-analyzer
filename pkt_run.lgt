@@ -7,9 +7,9 @@
 
   :- public(run/0).
   run:-
-    % analyze(messages).
-    %analyze(frames).
-    test_reader.
+    analyze(messages).
+    % analyze(frames).
+    % test_reader.
 
   load_all_tcp_icmp:-
     pcap('ih-tmp/very-total.pcap','tcp or icmp')::load.
@@ -73,12 +73,10 @@
     pcap_config::current_option(event_store_name, StoreName),
     pcap_config::current_option(message_store_name, MessageName),
     Events = term_reader(StoreName),
-    Events::connect,
     Saver = event_saver(MessageName),
     Saver::connect,
     message_analyzer(Events,Saver)::run,
-    Saver::disconnect,
-    Events::disconnect.
+    Saver::disconnect.
 
   test_reader:-
     pcap_config::current_option(event_store_name, StoreName),

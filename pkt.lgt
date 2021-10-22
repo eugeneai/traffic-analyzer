@@ -570,10 +570,45 @@
    :- protected(init/0).
    init.
 
+   to_11(_ , '192.168.1.107' : _).
+   dns('00:50:c2:00:5a:b3', 'CNTRL', '192.168.1.10').
+   dns('00:15:17:6a:98:1f', '_XEPR', '192.168.1.1').
+   dns('00:00:ad:0e:93:12', 'ESIGL', '192.168.1.12').
+   dns('00:00:ad:0e:91:12', 'ESIGH', '192.168.1.11').
+   dns('00:00:ad:0b:75:12', 'TNKR0', '192.168.1.14').
+   dns('00:00:ad:0e:e3:12', 'EHALL', '192.168.1.13').
+   dns('00:30:64:05:af:8c', 'SPJET', '192.168.1.16').
+   dns('00:00:ad:0d:86:12', 'ABRIG', '192.168.1.107').
+   dns('00:00:ad:0b:74:12', 'PTJET', '192.168.1.15').
+
+   dns(IP:Port, Name:Port) :-
+     dns(_, Name, IP).
+
    :- protected(analyze/2).
+
+   analyze(e(push(Data), S-D), N) :-
+     to_11(S,D),
+     !,
+     % debugger::trace,
+     dns(S,SN),
+     dns(D,DN),
+     format('~n~w REQ: from ~w to ~w~n', [N, SN,DN]),
+     buffer_dump(Data).
+
+   analyze(backward(e(push(Data), S-D)), N) :- fail,
+     to_11(S,D),
+     !,
+     dns(S,SN),
+     dns(D,DN),
+     format('~n~w ANS: to ~w from ~w~n', [N, SN,DN]),
+     buffer_dump(Data).
+
+   analyze(e(icmp, _-_), N) :- !,
+     format('~n~w ICMP~n',[N]).
+
+   analyze(_,_):-!.
    analyze(Event, PkgN) :-
-     format('A: ~w ~w ~n',[PkgN,Event]),
-     event(Event).
+     format('SKIP: ~w ~w ~n',[PkgN,Event]).
 
    :- use_module(library(pcre),[re_replace/4]).
    :- use_module(library(crypto),[hex_bytes/2]).
@@ -603,13 +638,18 @@
    :- public(bytes_dump/1).
    bytes_dump(Bytes) :-
      open_codes_stream(Bytes, Stream),
-     nl,
-     forall(read_string(Stream, 16, S),
-       (
-         hex_bytes(S, Bytes),
-         format('~w  ~w~n',[Bytes, S])
-       )
-     ).
+     dump_lines(Stream),
+     close(Stream).
+
+   dump_lines(Stream) :-
+     % debugger::trace,
+     read_string(Stream, 16, S16),
+     S16\="",!,
+     string_codes(S16, C16),
+     hex_bytes(Bytes, C16),
+     format('~w  ~w~n',[Bytes, S16]),
+     dump_lines(Stream).
+   dump_lines(_).
 
    :- public(buffer_dump/1).
    buffer_dump(Buf) :-
