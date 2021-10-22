@@ -638,18 +638,38 @@
    :- public(bytes_dump/1).
    bytes_dump(Bytes) :-
      open_codes_stream(Bytes, Stream),
-     dump_lines(Stream),
+     dump_lines(Stream, 0),
      close(Stream).
 
-   dump_lines(Stream) :-
+   dump_lines(Stream, N) :-
      % debugger::trace,
      read_string(Stream, 16, S16),
      S16\="",!,
+     string_length(S16,L16),
      string_codes(S16, C16),
      hex_bytes(Bytes, C16),
-     format('~w  ~w~n',[Bytes, S16]),
-     dump_lines(Stream).
-   dump_lines(_).
+     string_codes(Bytes, BB),
+     thin(BB,BBS),
+     string_codes(BBytes,BBS),
+     % debugger::trace,
+     clean_chars(C16,CC16),
+     format('~16r_|_~w_|_~s_|~n',[N, BBytes, CC16]),
+     L1 is N + L16,
+     dump_lines(Stream, L1).
+   dump_lines(_,_).
+
+   thin([C1,C2],[C1,C2]) :- !.
+   thin([C1,C2|T], [C1,C2,32|CT]) :-
+     thin(T,CT).
+
+   clean_char(C,C) :-
+     C > 32, C < 128,!.
+   clean_char(_,46).
+
+   clean_chars([],[]).
+   clean_chars([C|T],[CC|R]) :-
+     clean_char(C,CC),
+     clean_chars(T,R).
 
    :- public(buffer_dump/1).
    buffer_dump(Buf) :-
