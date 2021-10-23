@@ -24,6 +24,7 @@
   option(wireshark_executable, '/usr/bin/tshark').
   option(test_db_name, 'pcap-small.db').
   option(db_name, 'pcap.db').
+  option(command_store_name, 'commands.pl').
   option(message_store_name, 'messages.pl').
   option(event_store_name, 'event.pl').
   % option()
@@ -117,6 +118,97 @@
 
 :- end_object.
 
+:- object(analyzer(_Events_, _Receiver_)).
+   :- use_module(library(pcre),[re_replace/4]).
+   :- use_module(library(crypto),[hex_bytes/2]).
+   :- use_module(lists,[append/3]).
+   :- use_module(user,[open_codes_stream/2]).
+
+   :- protected(current_event/2).
+   current_event(Ev, PkgN) :-
+     _Events_::current_term(event(PkgN, Ev)).
+   :- protected(event/1).
+   event(Ev):-
+     _Receiver_::event(Ev).
+   :- protected(event/2).
+   event(Ev,Mark):-
+     _Receiver_::event(Ev, Mark).
+
+   :- public(run/0).
+   run :-
+      ::init,
+      forall(
+        current_event(Ev, PkgN),
+        ::analyze(Ev, PkgN)).
+
+   :- protected(analyze/2).
+   % None here, Implemented by subclass
+   analyze(_,_):-fail.
+
+   :- protected(init/0).
+   init. % Nothing to do by default.
+
+   :- protected(buffer_bytes/2).
+   buffer_bytes([], []).
+   buffer_bytes([X|T], R) :-
+     buffer_bytes(T, R1),
+     buffer_bytes(X, BX),
+     append(R1, BX, R).
+   buffer_bytes(Buf, Bytes) :-
+     re_replace(':'/g, '', Buf, Str),
+     hex_bytes(Str, Bytes).
+
+   :- protected(buffer_string/2).
+   buffer_string(Buf, Str) :-
+     buffer_bytes(Buf, Bytes),
+     string_chars(Str,Bytes).
+
+   :- protected(open_buffer/2).
+   open_buffer(Buf, Stream) :-
+     buffer_bytes(Buf, Bytes),
+     open_codes_stream(Bytes, Stream).
+
+   :- public(bytes_dump/1).
+   bytes_dump(Bytes) :-
+     open_codes_stream(Bytes, Stream),
+     dump_lines(Stream, 0),
+     close(Stream).
+
+   dump_lines(Stream, N) :-
+     % debugger::trace,
+     read_string(Stream, 16, S16),
+     S16\="",!,
+     string_length(S16,L16),
+     string_codes(S16, C16),
+     hex_bytes(Bytes, C16),
+     string_codes(Bytes, BB),
+     thin(BB,BBS),
+     string_codes(BBytes,BBS),
+     % debugger::trace,
+     clean_chars(C16,CC16),
+     format('~16r_|_~w_|_~s_|~n',[N, BBytes, CC16]),
+     L1 is N + L16,
+     dump_lines(Stream, L1).
+   dump_lines(_,_).
+
+   thin([C1,C2],[C1,C2]) :- !.
+   thin([C1,C2|T], [C1,C2,32|CT]) :-
+     thin(T,CT).
+
+   clean_char(C,C) :-
+     C >= 32, C < 128,!.
+   clean_char(_,46).
+
+   clean_chars([],[]).
+   clean_chars([C|T],[CC|R]) :-
+     clean_char(C,CC),
+     clean_chars(T,R).
+
+   :- public(buffer_dump/1).
+   buffer_dump(Buf) :-
+     buffer_bytes(Buf, Bytes),
+     bytes_dump(Bytes).
+:- end_object.
 
 :- object(packet(_Layers_)).
    :- use_module(library(option), [option/2]).
@@ -497,7 +589,7 @@
    final_state(removed).
 :- end_object.
 
-:- object(analyzer(_Sniffing_,_Receiver_)).
+:- object(frame_analyzer(_Sniffing_,_Receiver_)).
    :- protected(current_pack/1).
    current_pack(packet(Layers)) :-
      _Sniffing_::current_pack(json(Layers)).
@@ -543,23 +635,8 @@
 :- end_object.
 
 
-:- object(message_analyzer(_Events_, _Receiver_)).
-   :- protected(current_event/2).
-   current_event(Ev, PkgN) :-
-     _Events_::current_term(event(PkgN, Ev)).
-   :- protected(event/1).
-   event(Ev):-
-     _Receiver_::event(Ev).
-   :- protected(event/2).
-   event(Ev,Mark):-
-     _Receiver_::event(Ev, Mark).
-
-   :- public(run/0).
-   run :-
-      init,
-      forall(
-        current_event(Ev, PkgN),
-        analyze(Ev, PkgN)).
+:- object(message_analyzer(_Events_, _Receiver_),
+     extends(analyzer(_Events_,_Receiver_))).
 
    :- dynamic(conn/2).
    :- private(conn/2).
@@ -567,7 +644,6 @@
    current_conn(Client,Server):-
      conn(Client,Server).
 
-   :- protected(init/0).
    init.
 
    to_107(_ , '192.168.1.107' : _).
@@ -581,7 +657,9 @@
    to_11(_, '192.168.1.11':_).
    to_12(_, '192.168.1.12':_).
    to_ESIG(S,D) :-
-     to_11(S,D) ; to_12(S,D).
+     to_11(S,D).
+   to_ESIG(S,D) :-
+     to_12(S,D).
 
    to_TNK(_,'192.168.1.14':_).
    to_HALL(_,'192.168.1.13':_).
@@ -592,9 +670,9 @@
      IP\='192.168.1.1'.
 
    xchg(S,D):-
-     from_1(S,D) ;
+     from_1(S,D).
+   xchg(S,D):-
      ctrl_cmds(S,D).
-
 
    filter(S,D) :-
      xchg(S,D).
@@ -612,8 +690,6 @@
    dns(IP:Port, Name:Port) :-
      dns(_, Name, IP).
 
-   :- protected(analyze/2).
-
    analyze(e(push(Data), S-D), N) :-
      filter(S,D),
      !,
@@ -622,8 +698,8 @@
      dns(D,DN),
      format('~n~w REQ: from ~w to ~w~n', [N, SN,DN]),
      % buffer_dump(Data).
-     buffer_bytes(Data, Bytes),
-     event(e(command,S-D,Bytes), N).
+     ::buffer_bytes(Data, Bytes),
+     ::event(e(command,S-D,Bytes), N).
 
    analyze(backward(e(push(Data), S-D)), N) :-
      filter(S,D),
@@ -632,8 +708,8 @@
      dns(D,DN),
      format('~n~w ANS: to ~w from ~w~n', [N, SN,DN]),
      % buffer_dump(Data).
-     buffer_bytes(Data, Bytes),
-     event(e(answer,S-D,Bytes), N).
+     ::buffer_bytes(Data, Bytes),
+     ::event(e(answer,S-D,Bytes), N).
 
    analyze(e(icmp, _-_), N) :- !,
      format('~n~w ICMP~n',[N]).
@@ -642,75 +718,19 @@
    analyze(Event, PkgN) :-
      format('SKIP: ~w ~w ~n',[PkgN,Event]).
 
-   :- use_module(library(pcre),[re_replace/4]).
-   :- use_module(library(crypto),[hex_bytes/2]).
-   :- use_module(lists,[append/3]).
-   :- use_module(user,[open_codes_stream/2]).
-
-   :- protected(buffer_bytes/2).
-   buffer_bytes([], []).
-   buffer_bytes([X|T], R) :-
-     buffer_bytes(T, R1),
-     buffer_bytes(X, BX),
-     append(R1, BX, R).
-   buffer_bytes(Buf, Bytes) :-
-     re_replace(':'/g, '', Buf, Str),
-     hex_bytes(Str, Bytes).
-
-   :- protected(buffer_string/2).
-   buffer_string(Buf, Str) :-
-     buffer_bytes(Buf, Bytes),
-     string_chars(Str,Bytes).
-
-   :- protected(open_buffer/2).
-   open_buffer(Buf, Stream) :-
-     buffer_bytes(Buf, Bytes),
-     open_codes_stream(Bytes, Stream).
-
-   :- public(bytes_dump/1).
-   bytes_dump(Bytes) :-
-     open_codes_stream(Bytes, Stream),
-     dump_lines(Stream, 0),
-     close(Stream).
-
-   dump_lines(Stream, N) :-
-     % debugger::trace,
-     read_string(Stream, 16, S16),
-     S16\="",!,
-     string_length(S16,L16),
-     string_codes(S16, C16),
-     hex_bytes(Bytes, C16),
-     string_codes(Bytes, BB),
-     thin(BB,BBS),
-     string_codes(BBytes,BBS),
-     % debugger::trace,
-     clean_chars(C16,CC16),
-     format('~16r_|_~w_|_~s_|~n',[N, BBytes, CC16]),
-     L1 is N + L16,
-     dump_lines(Stream, L1).
-   dump_lines(_,_).
-
-   thin([C1,C2],[C1,C2]) :- !.
-   thin([C1,C2|T], [C1,C2,32|CT]) :-
-     thin(T,CT).
-
-   clean_char(C,C) :-
-     C >= 32, C < 128,!.
-   clean_char(_,46).
-
-   clean_chars([],[]).
-   clean_chars([C|T],[CC|R]) :-
-     clean_char(C,CC),
-     clean_chars(T,R).
-
-   :- public(buffer_dump/1).
-   buffer_dump(Buf) :-
-     buffer_bytes(Buf, Bytes),
-     bytes_dump(Bytes).
-
 :- end_object.
 
 
+:- object(command_analyzer(_Events_, _Receiver_),
+      extends(analyzer(_Events_, _Receiver_))).
+
+    init:-
+      format('Initialization test~n').
+
+    analyze(Ev, N):-
+      format('Got event ~w at ~w~n',[Ev,N]).
+
+:- end_object.
 % Util objects ---- might be make them the same?
 
 :- object(event_saver(_FileName_), extends(event_receiver)).

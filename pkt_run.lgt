@@ -7,7 +7,8 @@
 
   :- public(run/0).
   run:-
-    analyze(messages).
+    analyze(commands).
+    % analyze(messages).
     % analyze(frames).
     % test_reader.
 
@@ -65,7 +66,7 @@
     connect_sniffer(Snif),
     Saver = event_saver(FileName),
     Saver::connect,
-    analyzer(Snif, Saver)::run(LastState),
+    frame_analyzer(Snif, Saver)::run(LastState),
     Saver::disconnect,
     format('LastState:~w~n',[LastState]).
 
@@ -76,6 +77,15 @@
     Saver = event_saver(MessageName),
     Saver::connect,
     message_analyzer(Events,Saver)::run,
+    Saver::disconnect.
+
+  analyze(commands):-
+    pcap_config::current_option(message_store_name, MessageName),
+    pcap_config::current_option(command_store_name, StoreName),
+    Events = term_reader(MessageName),
+    Saver = event_saver(StoreName),
+    Saver::connect,
+    command_analyzer(Events, Saver)::run,
     Saver::disconnect.
 
   test_reader:-
