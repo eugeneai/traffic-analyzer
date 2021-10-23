@@ -134,12 +134,17 @@
    event(Ev,Mark):-
      _Receiver_::event(Ev, Mark).
 
+   :- protected(filter_event/2).
+   filter_event(_,_).
+
    :- public(run/0).
    run :-
       ::init,
       forall(
-        current_event(Ev, PkgN),
-        ::analyze(Ev, PkgN)).
+        ( ::current_event(Ev, PkgN),
+          ::filter_event(Ev, PkgN) ),
+        ::analyze(Ev, PkgN)),
+      ::done.
 
    :- protected(analyze/2).
    % None here, Implemented by subclass
@@ -147,6 +152,9 @@
 
    :- protected(init/0).
    init. % Nothing to do by default.
+
+   :- protected(done/0).
+   done. % Nothing to do by default.
 
    :- protected(buffer_bytes/2).
    buffer_bytes([], []).
@@ -196,8 +204,8 @@
      thin(T,CT).
 
    clean_char(C,C) :-
-     C >= 32, C < 128,!.
-   clean_char(_,46).
+     C >= 32, C < 127,!.
+   clean_char(_,183).
 
    clean_chars([],[]).
    clean_chars([C|T],[CC|R]) :-
@@ -634,9 +642,27 @@
       _Receiver_::event(removed(state(X)),none)).
 :- end_object.
 
+:- category(ih_dns).
+   :- public([dns/3,dns/2]).
+
+   dns('00:50:c2:00:5a:b3', cntrl, '192.168.1.10').
+   dns('00:15:17:6a:98:1f', xepr,  '192.168.1.1').
+   dns('00:00:ad:0e:93:12', esigl, '192.168.1.12').
+   dns('00:00:ad:0e:91:12', esigh, '192.168.1.11').
+   dns('00:00:ad:0b:75:12', tnkr0, '192.168.1.14').
+   dns('00:00:ad:0e:e3:12', ehall, '192.168.1.13').
+   dns('00:30:64:05:af:8c', spjet, '192.168.1.16'). % No data
+   dns('00:00:ad:0d:86:12', abrig, '192.168.1.107').
+   dns('00:00:ad:0b:74:12', ptjet, '192.168.1.15'). % No DATA
+
+   dns(IP:Port, Name:Port) :-
+     dns(_, Name, IP).
+
+:- end_category.
 
 :- object(message_analyzer(_Events_, _Receiver_),
-     extends(analyzer(_Events_,_Receiver_))).
+     extends(analyzer(_Events_,_Receiver_)),
+     imports(ih_dns)).
 
    :- dynamic(conn/2).
    :- private(conn/2).
@@ -677,25 +703,12 @@
    filter(S,D) :-
      xchg(S,D).
 
-   dns('00:50:c2:00:5a:b3', 'CNTRL', '192.168.1.10').
-   dns('00:15:17:6a:98:1f', '_XEPR', '192.168.1.1').
-   dns('00:00:ad:0e:93:12', 'ESIGL', '192.168.1.12').
-   dns('00:00:ad:0e:91:12', 'ESIGH', '192.168.1.11').
-   dns('00:00:ad:0b:75:12', 'TNKR0', '192.168.1.14').
-   dns('00:00:ad:0e:e3:12', 'EHALL', '192.168.1.13').
-   dns('00:30:64:05:af:8c', 'SPJET', '192.168.1.16'). % No DATA
-   dns('00:00:ad:0d:86:12', 'ABRIG', '192.168.1.107').
-   dns('00:00:ad:0b:74:12', 'PTJET', '192.168.1.15'). % No DATA
-
-   dns(IP:Port, Name:Port) :-
-     dns(_, Name, IP).
-
    analyze(e(push(Data), S-D), N) :-
      filter(S,D),
      !,
      % debugger::trace,
-     dns(S,SN),
-     dns(D,DN),
+     ::dns(S,SN),
+     ::dns(D,DN),
      format('~n~w REQ: from ~w to ~w~n', [N, SN,DN]),
      % buffer_dump(Data).
      ::buffer_bytes(Data, Bytes),
@@ -704,8 +717,8 @@
    analyze(backward(e(push(Data), S-D)), N) :-
      filter(S,D),
      !,
-     dns(S,SN),
-     dns(D,DN),
+     ::dns(S,SN),
+     ::dns(D,DN),
      format('~n~w ANS: to ~w from ~w~n', [N, SN,DN]),
      % buffer_dump(Data).
      ::buffer_bytes(Data, Bytes),
@@ -722,15 +735,96 @@
 
 
 :- object(command_analyzer(_Events_, _Receiver_),
-      extends(analyzer(_Events_, _Receiver_))).
+      extends(analyzer(_Events_, _Receiver_)),
+      imports(ih_dns)).
 
     init:-
-      format('Initialization test~n').
+      ^^init,
+      format('Initialization test~n'),
+      clear.
 
-    analyze(Ev, N):-
-      format('Got event ~w at ~w~n',[Ev,N]).
+    % For each command from XEPR (USER PC)
+    % there could be a number of answers from
+    % CTRL unit.
+    % So, we suppose that answers are received
+    % until new command has been sent to CTRL.
+
+    % filter_event(_,N) :-
+    %   N<5000.
+    done:-
+      command(C),
+      analyze_command(C),
+      clear.
+
+    :- private(command/1).
+    :- private(answer/1).
+    :- dynamic([command/1,answer/1]).
+
+    :- protected(clear/0).
+    clear :-
+      retractall(command(_)),
+      retractall(answer(_)).
+
+    % analyze(e(command, Client-Server, Data), N):-!,
+    %   format('Command at ~w~n',[N]),
+    %   (
+    %     command(C) ->
+    %       analyze_command(C),
+    %       forall(answer(A), analyze_answer(A)),
+    %       clear ; true ),
+    %   assertz(command(e(Client-Server, Data, N))).
+    % analyze(e(answer, Client-Server, Data), N):-!,
+    %   format('Answer at ~w~n',[N]),
+    %   assertz(answer(e(Client-Server,Data,N))).
+    analyze(e(command, Client-Server, Data), N):-!,
+      analyze_command(e(Client-Server, Data,N)).
+    analyze(e(answer, Client-Server, Data), N):-!,
+      analyze_answer(e(Client-Server,Data,N)).
+
+    analyze(Ev,_):-
+      format('Got a ~w',[Ev]),
+      fail.
+
+    :- dynamic([command/2,answer/2]).
+
+    analyze_command(e(C-S,Data,N)) :-
+      ::dns(C,CN:_),
+      ::dns(S,SN),
+      interp_command(CN-SN,Data,Interp),
+      format('CMD: ~w ~w~n',[CN-SN, Interp]),!,
+      assertz(command(CN-SN,e(Interp,N))).
+    analyze_answer(e(C-S,Data,N)) :-
+      ::dns(C,CN:_),
+      ::dns(S,SN),
+      interp_answer(CN-SN,Data,Interp),!,
+      assertz(answer(CN-SN,e(Interp,N))).
+
+    analyze(xepr:_ - cntrl:P, Data, N) :-
+      assertz(command(xepr-(cntrl:P),e(Data,N))).
+
+    cmd(cntrl - (_ : 10000), [00, 00, 00, 00, 0x40, 00, 00, 0x28], cyclope(sad)):-!.
+    cmd(cntrl - (_ : 10000), [00, 00, 00, 00, 0x40, 00, 00, 0x29], cyclope(happy)):-!.
+    cmd(cntrl - (_ : _),     [00, 00, 00, 00, 0x40|T], cyclope(T)):-length(T,3),!.
+    cmd(cntrl - (Unit : _), [00, 00, 00, Reg |T], reg(Unit, Reg, T)):-length(T,4),!.
+
+    cmd(xepr  - (cntrl : _), [0,0,0,Value|T], init(Value,T)).
+    cmd(xepr  - (cntrl : _), [_,_,_,_,_,_,120,117,115,101,114,0,104,116,116,112,95,112,114,111,120,0,67,56,50,54,53,82,70,76,0], 'xuser.http_prox.C8265RFL').
+
+    interp_command(C-S, Data, Cmd):-
+      cmd(C-S, Data, Cmd),!.
+    interp_command(C-S, Data, Data):-
+      format('CMD: ~w DUMP~n',[C-S]),
+      ::bytes_dump(Data),!.
+    interp_answer(C-S, Data, Data):-
+      format('ANS: ~w DUMP~n',[C-S]),
+      ::bytes_dump(Data),!.
 
 :- end_object.
+
+
+
+
+
 % Util objects ---- might be make them the same?
 
 :- object(event_saver(_FileName_), extends(event_receiver)).
