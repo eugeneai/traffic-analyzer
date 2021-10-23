@@ -570,16 +570,44 @@
    :- protected(init/0).
    init.
 
-   to_11(_ , '192.168.1.107' : _).
+   to_107(_ , '192.168.1.107' : _).
+   to_10(_ , '192.168.1.10' : N) :- N\=50000.
+
+   from_1('192.168.1.1' : _, _).
+
+   % from XEPR connect only to CTRL
+   % CTRL to BR, command length either 8 bytes (00000) or 16
+
+   to_11(_, '192.168.1.11':_).
+   to_12(_, '192.168.1.12':_).
+   to_ESIG(S,D) :-
+     to_11(S,D) ; to_12(S,D).
+
+   to_TNK(_,'192.168.1.14':_).
+   to_HALL(_,'192.168.1.13':_).
+   to_SPJET(_,'192.168.1.16':_).
+   to_PTJET(_,'192.168.1.16':_).
+
+   ctrl_cmds('192.168.1.10':_,IP:_) :-
+     IP\='192.168.1.1'.
+
+   xchg(S,D):-
+     from_1(S,D) ;
+     ctrl_cmds(S,D).
+
+
+   filter(S,D) :-
+     xchg(S,D).
+
    dns('00:50:c2:00:5a:b3', 'CNTRL', '192.168.1.10').
    dns('00:15:17:6a:98:1f', '_XEPR', '192.168.1.1').
    dns('00:00:ad:0e:93:12', 'ESIGL', '192.168.1.12').
    dns('00:00:ad:0e:91:12', 'ESIGH', '192.168.1.11').
    dns('00:00:ad:0b:75:12', 'TNKR0', '192.168.1.14').
    dns('00:00:ad:0e:e3:12', 'EHALL', '192.168.1.13').
-   dns('00:30:64:05:af:8c', 'SPJET', '192.168.1.16').
+   dns('00:30:64:05:af:8c', 'SPJET', '192.168.1.16'). % No DATA
    dns('00:00:ad:0d:86:12', 'ABRIG', '192.168.1.107').
-   dns('00:00:ad:0b:74:12', 'PTJET', '192.168.1.15').
+   dns('00:00:ad:0b:74:12', 'PTJET', '192.168.1.15'). % No DATA
 
    dns(IP:Port, Name:Port) :-
      dns(_, Name, IP).
@@ -587,21 +615,25 @@
    :- protected(analyze/2).
 
    analyze(e(push(Data), S-D), N) :-
-     to_11(S,D),
+     filter(S,D),
      !,
      % debugger::trace,
      dns(S,SN),
      dns(D,DN),
      format('~n~w REQ: from ~w to ~w~n', [N, SN,DN]),
-     buffer_dump(Data).
+     % buffer_dump(Data).
+     buffer_bytes(Data, Bytes),
+     event(e(command,S-D,Bytes), N).
 
-   analyze(backward(e(push(Data), S-D)), N) :- fail,
-     to_11(S,D),
+   analyze(backward(e(push(Data), S-D)), N) :-
+     filter(S,D),
      !,
      dns(S,SN),
      dns(D,DN),
      format('~n~w ANS: to ~w from ~w~n', [N, SN,DN]),
-     buffer_dump(Data).
+     % buffer_dump(Data).
+     buffer_bytes(Data, Bytes),
+     event(e(answer,S-D,Bytes), N).
 
    analyze(e(icmp, _-_), N) :- !,
      format('~n~w ICMP~n',[N]).
@@ -663,7 +695,7 @@
      thin(T,CT).
 
    clean_char(C,C) :-
-     C > 32, C < 128,!.
+     C >= 32, C < 128,!.
    clean_char(_,46).
 
    clean_chars([],[]).
