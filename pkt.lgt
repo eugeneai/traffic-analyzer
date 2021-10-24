@@ -121,7 +121,7 @@
 :- object(analyzer(_Events_, _Receiver_)).
    :- use_module(library(pcre),[re_replace/4]).
    :- use_module(library(crypto),[hex_bytes/2]).
-   :- use_module(lists,[append/3]).
+   :- use_module(lists,[append/3,length/2]).
    :- use_module(user,[open_codes_stream/2]).
 
    :- protected(current_event/2).
@@ -178,6 +178,8 @@
 
    :- public(bytes_dump/1).
    bytes_dump(Bytes) :-
+     length(Bytes,Len),
+     format('Length: 0x~16r (~w)~n',[Len,Len]),
      open_codes_stream(Bytes, Stream),
      dump_lines(Stream, 0),
      close(Stream).
@@ -192,9 +194,10 @@
      string_codes(Bytes, BB),
      thin(BB,BBS),
      string_codes(BBytes,BBS),
-     % debugger::trace,
      clean_chars(C16,CC16),
-     format('~16r_|_~w_|_~s_|~n',[N, BBytes, CC16]),
+     format(atom(HexAddr),'~16r',[N]),
+     string_field(HexAddr, 5, HA5),
+     format('~w_|_~w_|_~s_|~n',[HA5, BBytes, CC16]),
      L1 is N + L16,
      dump_lines(Stream, L1).
    dump_lines(_,_).
@@ -202,6 +205,8 @@
    thin([C1,C2],[C1,C2]) :- !.
    thin([C1,C2|T], [C1,C2,32|CT]) :-
      thin(T,CT).
+
+   :- protected(clean_chars/2).
 
    clean_char(C,C) :-
      C >= 32, C < 127,!.
@@ -216,6 +221,24 @@
    buffer_dump(Buf) :-
      buffer_bytes(Buf, Bytes),
      bytes_dump(Bytes).
+
+   :- public(string_field/3).
+   % string_field(Str,Width,Res)
+   string_field(Str, Width, Res) :-
+     string_length(Str, N),
+     ( N>=Width -> Res = Str ;
+       D is Width - N,
+       string_chars(Str,Chars),
+       zeroes(Chars, CRes, D),
+       string_chars(Res, CRes)
+       ).
+
+   :- public(zeroes/3).
+   zeroes(Str,Str,0).
+   zeroes(Str,Res,N) :- N>0,!,
+     N1 is N - 1,
+     zeroes(['0'|Str],Res,N1).
+
 :- end_object.
 
 :- object(packet(_Layers_)).
@@ -791,16 +814,79 @@
       ::dns(C,CN:_),
       ::dns(S,SN),
       interp_command(CN-SN,Data,Interp),
-      format('CMD: ~w ~w~n',[CN-SN, Interp]),!,
-      assertz(command(CN-SN,e(Interp,N))).
+      format('~w CMD: ~w ~w ~n',[N, CN-SN, Interp]),!.
+      % assertz(command(CN-SN,e(Interp,N))).
     analyze_answer(e(C-S,Data,N)) :-
       ::dns(C,CN:_),
       ::dns(S,SN),
       interp_answer(CN-SN,Data,Interp),!,
-      assertz(answer(CN-SN,e(Interp,N))).
+      format('~w ANS: ~w::~n',[N, CN-SN]),!,
+      dump_interp(Interp), nl.
+      % assertz(answer(CN-SN,e(Interp,N))).
 
-    analyze(xepr:_ - cntrl:P, Data, N) :-
-      assertz(command(xepr-(cntrl:P),e(Data,N))).
+    dump_interp([]).
+    dump_interp([a(L,m(C,Cmd,S,B))|T]) :- !,
+      % debugger::trace,
+      % ::clean_chars(S,CS),
+      format('DATA4:~w ~w ~w ~w ~n',[L,C,Cmd,S]),
+      ::bytes_dump(B),
+      dump_interp(T).
+    dump_interp(answers(L)) :- !,
+      dump_interp(L).
+    dump_interp(A) :- format('~w',[A]).
+
+    simple_string(Codes, Str) :-
+      string_codes(S,Codes), split_string(S,"","\x0",[Str]).
+
+    no_trail_0([],[]).
+    no_trail_0([X|T],R):-
+      no_trail_0(T,T1),
+      (
+        T1 = [], X=0 -> R=[] ;
+        T1 = [] -> R = [X] ;
+        R = [X|T1]
+      ).
+    %       Name,                       Len, Skip_after_name0
+    cmd_len('gTempCtrl.TemperatureMon',   7, 0).
+    cmd_len('cwBridge.CalibState',   10, 2).
+    cmd_len('sctCalib.StepModFreq',   104, 0).
+    cmd_len('sctCalib.StartMod',  104, 0).
+
+    msg_acqhidden(Data, Res, Cmd) :-
+      cmd_len(Cmd, CmdLen, SkipLen),
+      string_codes(Cmd, Codes),
+      append(Codes, Rest, Data),!,
+      Rest = [0|Rest1],
+      length(Skip,SkipLen),
+      length(Res,CmdLen),
+      append(Skip,Rest2, Rest1),
+      append(Res,_, Rest2).
+
+    msg_acqhidden(D,D,'unrecognized_cmd').
+
+    msg([0,0,3,32], [0,0,3, C, 0x41, 0x63, 0x71, 0x48, 0x69, 0x64, 0x64, 0x65, 0x6e, 0x2e|R],
+        Res, pkgno(C), command(Cmd)) :-
+      % debugger::trace,
+      %format(atom(PC), '[0x~16r]', [C]),
+      %string_codes(PC, PCC),
+      msg_acqhidden(R, Res, Cmd).
+      %append(PCC,D, Res).
+
+
+    msgs(Data, [a([C,D,E,F],m(CodeNum, Cmd, MsgData, Q1))|T]):-
+      Data = [0,0,A,B|_],
+      Len is A*256+B,
+      length(Q, Len),
+      append(Q, Rest, Data),!,
+      msgs(Rest,T),
+      Q=[C,D,E,F|QT],
+      msg([C,D,E,F],QT,RT,CodeNum, Cmd),
+      no_trail_0(RT,Q1),
+      ::clean_chars(Q1,CQ),
+      string_codes(MsgData,CQ).
+
+    msgs([], []):-!.
+    msgs(Data, [r(Data)]).
 
     cmd(cntrl - (_ : 10000), [00, 00, 00, 00, 0x40, 00, 00, 0x28], cyclope(sad)):-!.
     cmd(cntrl - (_ : 10000), [00, 00, 00, 00, 0x40, 00, 00, 0x29], cyclope(happy)):-!.
@@ -808,14 +894,46 @@
     cmd(cntrl - (Unit : _), [00, 00, 00, Reg |T], reg(Unit, Reg, T)):-length(T,4),!.
 
     cmd(xepr  - (cntrl : _), [0,0,0,Value|T], init(Value,T)).
-    cmd(xepr  - (cntrl : _), [_,_,_,_,_,_,120,117,115,101,114,0,104,116,116,112,95,112,114,111,120,0,67,56,50,54,53,82,70,76,0], 'xuser.http_prox.C8265RFL').
+    cmd(xepr  - (cntrl : _), [0x41, 0x63, 0x71, 0x48, 0x69, 0x64, 0x64, 0x65, 0x6e, 0x2e|T], 'AcqHidden'(S1)) :- length(T,14), !, simple_string(T,S1).
+
+    cmd(xepr  - ( cntrl : _), [03, 0x00, 0x00, 0x64, 0x03, 0xe8, 0x78, 0x75,
+      0x73, 0x65, 0x72, 0x00, 0x68, 0x74, 0x74,
+      0x70, 0x5f, 0x70, 0x72, 0x6f, 0x78, 0x00,
+      0x43, 0x38, 0x32, 0x36, 0x35, 0x52, 0x46, 0x4c, 0x00], 'xuser.http_prox.C8265RFL').
+
+    cmd(cntrl - ( abrig : 10106 ), [0,0,0,0], get_graph).
+
+    :- use_module(lists, [append/3]).
+    :- dynamic(prev_answer/1).
+
+    % 31889
+
+    ans(cntrl - ( abrig : 10106 ) , _, skip_bridge_graph) :-! .
+
+    ans(xepr - (cntrl : P), Data, Event) :-
+      retract(prev_answer(PrevData)), !,
+      append(PrevData, Data, AllData),
+      ans(xepr - (cntrl : P ), AllData, Event).
+
+    ans(xepr - (cntrl : _), Data, 'answers'(Msgs)) :-
+      Data = [0,0, A,B|_],
+      length(Data,L), L >= A*256+B, !,
+      msgs(Data, Msgs).
+
+    ans(xepr - (cntrl : _), Data, data_part) :-
+        Data = [0,0, A,B|_],
+        length(Data,L), L < A*256+B,!,
+        asserta(prev_answer(Data)).
 
     interp_command(C-S, Data, Cmd):-
       cmd(C-S, Data, Cmd),!.
     interp_command(C-S, Data, Data):-
       format('CMD: ~w DUMP~n',[C-S]),
       ::bytes_dump(Data),!.
-    interp_answer(C-S, Data, Data):-
+
+    interp_answer(C-S, Data, Ans):-
+      ans(C-S, Data, Ans),!.
+    interp_answer(C-S, Data, none):-
       format('ANS: ~w DUMP~n',[C-S]),
       ::bytes_dump(Data),!.
 
